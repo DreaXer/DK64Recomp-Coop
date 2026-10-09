@@ -813,7 +813,7 @@ int main(int argc, char** argv) {
     // Register extensions for two types: Props and ActorMarkers.
     recomputil::init_extended_object_data(2);
 
-    recompinput::players::set_single_player_mode(true);
+    recompinput::players::set_single_player_mode(false);
 
     dk64::init_config();
 
