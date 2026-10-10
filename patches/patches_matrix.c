@@ -55,6 +55,8 @@ Gfx *func_global_asm_80687EE0(Gfx *dl, Actor *arg1);
 extern Actor *actor_list[];
 extern s16 actor_count;
 
+extern u8 cc_player_index;
+
 Gfx *set_model_matrix_group(Gfx * dl, void *geo_list, u8 skip_rotation, u8 *pushed) {
     if (cur_drawn_model_transform_id != 0) {
         u32 group_id;
@@ -66,6 +68,9 @@ Gfx *set_model_matrix_group(Gfx * dl, void *geo_list, u8 skip_rotation, u8 *push
         // else {
             // Other models use a group ID determined by the transform ID offset.
             group_id = cur_drawn_model_transform_id + cur_model_transform_id_offset;
+            // @coop: each viewport gets its own interpolation group, otherwise the previous-frame matrix of the
+            // same object drawn for the other player is used for interpolation (objects slide with the other camera).
+            group_id += ((u32)cc_player_index) << 26;
         // }
         if (skip_interpolation || cur_drawn_model_skip_interpolation) {
             // Skip interpolation if all interpolation is currently skipped or the transform was specified to be skipped.

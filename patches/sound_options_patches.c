@@ -1248,6 +1248,7 @@ RECOMP_PATCH void func_menu_8002D8AC(Actor *arg0, s32 arg1) {
     }
 }
 
+#define COOP_DISABLE_BATTLE 1 // 0 = restore the normal (mod option) behaviour
 u8 temporary_flag_block[0xE];
 u8 *getFlagBlockAddress(u8 flagType);
 void func_global_asm_807311C4(s16 index);
@@ -1257,7 +1258,7 @@ RECOMP_PATCH u8 isFlagSet(s16 flagIndex, u8 flagType) { // TODO: Can we use the 
     
     if ((flagIndex == 0x1C) && (flagType == FLAG_TYPE_GLOBAL)) {
         // Multiplayer enabled global flag
-        if (!recomp_get_mp_enabled()) {
+        if (COOP_DISABLE_BATTLE || !recomp_get_mp_enabled()) { // @coop: Kong Battle menu locked while the story co-op is developed
             return FALSE;
         }
     }

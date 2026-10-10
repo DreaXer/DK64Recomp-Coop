@@ -38,6 +38,7 @@ namespace dk64 {
 
         namespace technical {
             inline const std::string multiplayer_enabled = "multiplayer_enabled";
+            inline const std::string coop_enabled = "coop_enabled";
         }
     }
 
@@ -100,6 +101,12 @@ namespace dk64 {
         On
     };
     MultiplayerEnabled get_multiplayer_enabled();
+
+    enum class CoopEnabled {
+        Off,
+        On
+    };
+    CoopEnabled get_coop_enabled();
 
     void open_quit_game_prompt();
 };

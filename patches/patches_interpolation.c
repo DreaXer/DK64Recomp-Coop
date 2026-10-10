@@ -58,6 +58,8 @@ void set_sprite_interpolation_state(void) {
     }
 }
 
+extern u8 cc_player_index;
+
 Gfx *handle_interpolation(Gfx * dl, interpolationIDs id, u8 decrement) {
     skipInterpHandler(&interpolation_disable_timer, &skip_interpolation, decrement);
     skipInterpHandler(&persp_interpolation_disable_timer, &skip_persp_interp, decrement);
@@ -67,6 +69,7 @@ Gfx *handle_interpolation(Gfx * dl, interpolationIDs id, u8 decrement) {
         skip_persp_interp = TRUE;
     }
     if (id != 0) {
+        id = (interpolationIDs)((u32)id + (((u32)cc_player_index) << 26)); // @coop: separate projection interpolation per viewport
         if (skip_interpolation || skip_persp_interp) {
             gEXMatrixGroupSkipAllAspect(dl++, id, G_EX_NOPUSH, G_MTX_PROJECTION, G_EX_EDIT_NONE, G_EX_ASPECT_AUTO);
         }
@@ -478,6 +481,9 @@ extern s32 func_global_asm_8068A3A0(s32 arg0, u32 *arg1);
 extern f32 func_global_asm_8065D0FC(f32 arg0);
 extern void func_global_asm_8068A404(Actor *arg0, s32 arg1, s32 arg2);
 
+extern int coop_colour_active(void);
+#define COOP_P2_COLOUR 1 // Battle-mode colour index used for Player 2 in story co-op
+
 // @recomp: LOD Handler
 RECOMP_PATCH void func_global_asm_8068A508(void) {
     PlayerAdditionalActorData *PaaD;
@@ -506,6 +512,12 @@ RECOMP_PATCH void func_global_asm_8068A508(void) {
                                 PaaD = temp_s0->PaaD;
                                 if (D_global_asm_807552F4[PaaD->unk1A4] >= 0) {
                                     func_global_asm_8068A404(temp_s0, sp80, D_global_asm_807552F4[PaaD->unk1A4]);
+                                }
+                            } else if ((temp_s0->interactable & 1) && coop_colour_active()) {
+                                // Story co-op: P1 keeps the default colours, P2 uses the Battle mode's 2nd colour scheme.
+                                PaaD = temp_s0->PaaD;
+                                if (PaaD->unk1A4 == 1) {
+                                    func_global_asm_8068A404(temp_s0, sp80, COOP_P2_COLOUR);
                                 }
                             }
                             break;

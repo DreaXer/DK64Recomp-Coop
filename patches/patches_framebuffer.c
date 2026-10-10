@@ -801,7 +801,7 @@ RECOMP_PATCH Gfx* func_global_asm_80704B20(Gfx* dl, f32 arg1, f32 arg2, Mtx* arg
     temp_f2 = -(256.0f - (func_global_asm_80612D10(arg2) * 300.0f)) - 80.0f;
     var_v1 = D_global_asm_807F5D10->CaaD;
     if (arg4 == 5) {
-        temp_f2 += ((0.08 * character_change_array->unk2CA) - 75.0);
+        temp_f2 += ((0.08 * character_change_array[cc_player_index].unk2CA) - 75.0);
     }
     switch (arg6) {
         case 0:
@@ -822,7 +822,7 @@ RECOMP_PATCH Gfx* func_global_asm_80704B20(Gfx* dl, f32 arg1, f32 arg2, Mtx* arg
             }
             break;
     }
-    if ((var_v1->unkFA != 0) && (character_change_array->unk220 < (var_v1->unk90 + 3.0f))) {
+    if ((var_v1->unkFA != 0) && (character_change_array[cc_player_index].unk220 < (var_v1->unk90 + 3.0f))) {
         sp130 *= 0.1;
         sp12C *= 0.1;
         sp128 *= 0.3;
@@ -856,16 +856,16 @@ RECOMP_PATCH Gfx* func_global_asm_80704B20(Gfx* dl, f32 arg1, f32 arg2, Mtx* arg
     gEXMatrixGroup(dl++, MTXTAG_SKYBOXBLEND, G_EX_INTERPOLATE_SIMPLE, G_EX_NOPUSH, G_MTX_PROJECTION, G_EX_COMPONENT_INTERPOLATE, G_EX_COMPONENT_INTERPOLATE, G_EX_COMPONENT_INTERPOLATE, G_EX_COMPONENT_INTERPOLATE, G_EX_COMPONENT_INTERPOLATE, G_EX_COMPONENT_SKIP, G_EX_COMPONENT_INTERPOLATE, G_EX_ORDER_LINEAR, G_EX_EDIT_NONE, G_EX_ASPECT_STRETCH, G_EX_COMPONENT_SKIP, G_EX_COMPONENT_AUTO);
     gSPMatrix(dl++, &D_2000080, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
     gSPMatrix(dl++, &D_2000180, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
-    gSPViewport(dl++, osVirtualToPhysical(&character_change_array->unk250[D_global_asm_807444FC]));
+    gSPViewport(dl++, osVirtualToPhysical(&character_change_array[cc_player_index].unk250[D_global_asm_807444FC]));
     gDPSetScissor(dl++, G_SC_NON_INTERLACE,
-        character_change_array->unk270[0],
-        character_change_array->unk270[1],
-        character_change_array->unk270[2],
-        character_change_array->unk270[3]
+        character_change_array[cc_player_index].unk270[0],
+        character_change_array[cc_player_index].unk270[1],
+        character_change_array[cc_player_index].unk270[2],
+        character_change_array[cc_player_index].unk270[3]
     );
     temp_t2 = D_global_asm_80754ED8[arg4]->unk22;
     guTranslateF(spE4, 0.0f, -temp_t2, 0.0f);
-    func_global_asm_80612CA0(spA4, ((s32) (((0x1000 - character_change_array->unk2CC) & 0xFFF) * 0x168) / 4096));
+    func_global_asm_80612CA0(spA4, ((s32) (((0x1000 - character_change_array[cc_player_index].unk2CC) & 0xFFF) * 0x168) / 4096));
     guMtxCatF(spE4, spA4, spE4);
     guTranslateF(spA4, 160.0f, temp_t2 + temp_f2, 0.0f);
     guMtxCatF(spE4, spA4, spE4);
@@ -931,7 +931,7 @@ RECOMP_PATCH Gfx* func_global_asm_807069A4(Gfx* dl, f32 arg1, f32 arg2, s32 arg3
     upscale_ratio = (f32)(width * 3) / (f32)(height * 4);  // x0.75 == / (4/3)
 
     temp_f0 = 5.6f / D_global_asm_80754CE4;
-    temp_s3 = character_change_array->playerPointer;
+    temp_s3 = character_change_array[cc_player_index].playerPointer;
     PaaD = temp_s3->PaaD;
     guScaleF(spDC, temp_f0, temp_f0, temp_f0);
     guTranslateF(sp9C, -2560.0f * upscale_ratio, -1920.0f, 0.0f);
@@ -1045,7 +1045,7 @@ RECOMP_PATCH Gfx* func_global_asm_80707980(Gfx* dl, f32 arg1, f32 arg2, Mtx *arg
             dl = func_global_asm_807069A4(dl, arg1, arg2, 0x2E, 320.0f, 240.0f);
             break;
         case MAP_AZTEC:
-            switch (character_change_array->chunk) {
+            switch (character_change_array[cc_player_index].chunk) {
                 case 0:
                 case 1:
                 case 3:
@@ -1061,7 +1061,7 @@ RECOMP_PATCH Gfx* func_global_asm_80707980(Gfx* dl, f32 arg1, f32 arg2, Mtx *arg
             }
             break;
         case MAP_GALLEON:
-            temp_v0 = character_change_array->chunk;
+            temp_v0 = character_change_array[cc_player_index].chunk;
             // @recomp: Change chunk checks
             // if (((temp_v0 != 7) && (temp_v0 != 6) && (temp_v0 != 8) && (temp_v0 != 0)) || (D_global_asm_807FD800 != 0)) {
                 if ((gPlayerPointer->unk12C == 9) || (gPlayerPointer->unk12C == 0xB) || (gPlayerPointer->unk12C == 3)) {
@@ -1083,7 +1083,7 @@ RECOMP_PATCH Gfx* func_global_asm_80707980(Gfx* dl, f32 arg1, f32 arg2, Mtx *arg
             dl = func_global_asm_8070770C(dl);
             break;
         case MAP_JAPES:
-            switch (character_change_array->chunk) {
+            switch (character_change_array[cc_player_index].chunk) {
             case 8:
             case 9:
             case 12:
@@ -1106,7 +1106,7 @@ RECOMP_PATCH Gfx* func_global_asm_80707980(Gfx* dl, f32 arg1, f32 arg2, Mtx *arg
             dl = func_global_asm_80705F5C(dl, 0, 0x7D00, 0);
             break;
         case MAP_FUNGI:
-            if ((character_change_array->chunk >= 0xC) && (character_change_array->chunk < 0x12)) {
+            if ((character_change_array[cc_player_index].chunk >= 0xC) && (character_change_array[cc_player_index].chunk < 0x12)) {
                 dl = func_global_asm_8070770C(dl);
             } else {
                 func_global_asm_80705C00(0, 0x5DC0, 1U);
@@ -1119,8 +1119,8 @@ RECOMP_PATCH Gfx* func_global_asm_80707980(Gfx* dl, f32 arg1, f32 arg2, Mtx *arg
             break;
         case MAP_DK_ISLES_OVERWORLD:
             if (func_global_asm_8061CB50() != 0) {
-                var_f14 = character_change_array->look_at_eye[0];
-                var_f16 = character_change_array->look_at_eye[2];
+                var_f14 = character_change_array[cc_player_index].look_at_eye[0];
+                var_f16 = character_change_array[cc_player_index].look_at_eye[2];
             } else {
                 var_f14 = gPlayerPointer->position.f[0];
                 var_f16 = gPlayerPointer->position.f[2];

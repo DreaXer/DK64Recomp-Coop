@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstdio>
 
 #include "recomp.h"
 #include "librecomp/overlays.hpp"
@@ -181,6 +182,27 @@ extern "C" void recomp_get_mp_enabled(uint8_t* rdram, recomp_context* ctx) {
             _return(ctx, 1);
             return;
     }
+}
+
+// Debug helper for the co-op split-screen work: reads an integer from "coop_debug.txt" (working directory),
+// re-read about once per second. Returns 0 when the file is missing.
+extern "C" void recomp_get_coop_debug(uint8_t* rdram, recomp_context* ctx) {
+    static int cached = 0;
+    static int counter = 0;
+    if ((counter++ % 120) == 0) {
+        int v = 0;
+        FILE* f = fopen("coop_debug.txt", "r");
+        if (f) {
+            if (fscanf(f, "%d", &v) != 1) v = 0;
+            fclose(f);
+        }
+        cached = v;
+    }
+    _return(ctx, cached);
+}
+
+extern "C" void recomp_get_coop_enabled(uint8_t* rdram, recomp_context* ctx) {
+    _return(ctx, dk64::get_coop_enabled() == dk64::CoopEnabled::On ? 1 : 0);
 }
 
 extern "C" void recomp_get_ui_bounds(uint8_t* rdram, recomp_context* ctx) {

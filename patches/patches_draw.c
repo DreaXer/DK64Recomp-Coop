@@ -198,6 +198,7 @@ void func_global_asm_8065C334(f32 arg0, f32 arg1, f32 arg2, s16 arg3, u8 *arg4, 
 Gfx *func_global_asm_8065D008(Gfx *dl, s16 arg1, u8 arg2);
 extern u8 cc_number_of_players;
 extern u8  D_global_asm_807444FC;
+extern int coop_barrel_scene_actor(Actor *a);
 RECOMP_PATCH Gfx* func_global_asm_80630DCC(s32 arg0, Actor* arg1, Gfx* dl, s32 arg3) {
     f32 temp_f0_2;
     f32 temp_f0_3;
@@ -223,6 +224,9 @@ RECOMP_PATCH Gfx* func_global_asm_80630DCC(s32 arg0, Actor* arg1, Gfx* dl, s32 a
     s32 dst;
 
     spB8 = 1.0f;
+    if (coop_barrel_scene_actor(arg1)) { // @coop: tag barrel scene only drawn for the Kong who is choosing
+        return dl;
+    }
     if ((arg1->object_properties_bitfield & 4) == 0) {
         var_v1 = FALSE;
         if ((cc_number_of_players >= 2) && (arg1->interactable & 1) && (arg1->PaaD->unk1A4 != cc_player_index)) {
@@ -534,6 +538,41 @@ extern s32 D_global_asm_807FBB64;
 extern Actor *gLastSpawnedActor;
 extern Actor *gCurrentActorPointer;
 
+extern int coop_colour_active(void);
+extern u8 D_global_asm_80755698[];
+f32 func_global_asm_80689DD4(f32 x, f32 y, f32 z);
+u8 func_global_asm_80652F24(s16 arg0, s16 arg1);
+// @coop: distance to the closest Kong / chunk visible by any viewport (the original only looks at player 0)
+static f32 coop_enemy_dist(f32 x, f32 y, f32 z) { return func_global_asm_80689DD4(x, y, z); }
+static u8 coop_enemy_chunk_vis(s16 c) { return func_global_asm_80652F24(0, c) || func_global_asm_80652F24(1, c); }
+
+RECOMP_PATCH u8 func_global_asm_80727F20(EnemySpawner *arg0, s32 arg1) {
+    return (coop_enemy_dist(arg0->init.x_pos, arg0->init.y_pos, arg0->init.z_pos) < arg1)
+        && ((D_global_asm_80755698[arg0->alternative_enemy_spawn] == 6)
+            || (arg0->properties_bitfield & 0x20)
+            || coop_enemy_chunk_vis(arg0->chunk));
+}
+
+RECOMP_PATCH u8 func_global_asm_80728004(EnemySpawner *arg0, s32 arg1) {
+    return (arg1 > coop_enemy_dist(arg0->tied_actor->x_position, arg0->tied_actor->y_position, arg0->tied_actor->z_position))
+        && ((arg0->tied_actor->interactable & 0x40)
+            || (arg0->properties_bitfield & 0x20)
+            || coop_enemy_chunk_vis(arg0->chunk));
+}
+
+RECOMP_PATCH u8 func_global_asm_807280C8(EnemySpawner *arg0, s32 arg1) {
+    return (arg1 < coop_enemy_dist(arg0->tied_actor->x_position, arg0->tied_actor->y_position, arg0->tied_actor->z_position))
+        || (!(arg0->tied_actor->interactable & 0x40)
+            && !(arg0->properties_bitfield & 0x20)
+            && !coop_enemy_chunk_vis(arg0->chunk));
+}
+
+RECOMP_PATCH u8 func_global_asm_8072818C(EnemySpawner *arg0, s32 arg1) {
+    s32 temp_f0 = _sqrtf(arg1) * 1.5;
+    return ((arg0->tied_actor->interactable & 2) && !(arg0->properties_bitfield & 0x20) && arg0->init.something_spawn_state == 2)
+        && (SQ(temp_f0)) < coop_enemy_dist(arg0->tied_actor->x_position, arg0->tied_actor->y_position, arg0->tied_actor->z_position);
+}
+
 RECOMP_PATCH void func_global_asm_80727958(void) {
     Actor *temp_a0;
     Actor *temp_a0_2;
@@ -634,11 +673,14 @@ RECOMP_PATCH void func_global_asm_80727958(void) {
                         }
                     }
                 }
-                if (cc_number_of_players > 1) {
-                    for (j = 0; j < cc_number_of_players; j++) {
-                        PaaD = character_change_array->playerPointer->PaaD;
-                        dz = gCurrentActorPointer->z_position - character_change_array[j].playerPointer->z_position;
-                        dx = gCurrentActorPointer->x_position - character_change_array[j].playerPointer->x_position;
+                // @coop: in story co-op (cc_number_of_players == 1 with two Kong actors) pick the nearest of the two Kongs
+                if (coop_colour_active() || cc_number_of_players > 1) {
+                    int coop_n = coop_colour_active() ? 2 : cc_number_of_players;
+                    for (j = 0; j < coop_n; j++) {
+                        if (character_change_array[j].playerPointer == NULL) continue;
+                        PaaD = character_change_array[j].playerPointer->PaaD;
+                        dz = var_s0->tied_actor->z_position - character_change_array[j].playerPointer->z_position;
+                        dx = var_s0->tied_actor->x_position - character_change_array[j].playerPointer->x_position;
                         temp_f16 = SQ(dz) + SQ(dx);
                         if ((temp_f16 < min_dist) || (PaaD->unkD4 != 0)) {
                             min_dist = temp_f16;

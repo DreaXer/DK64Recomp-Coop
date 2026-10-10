@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstring>
 #include <cassert>
 #include <unordered_map>
 #include <vector>
@@ -679,9 +680,143 @@ void on_launcher_init(recompui::LauncherMenu *menu) {
 
 #define REGISTER_FUNC(name) recomp::overlays::register_base_export(#name, name)
 
+
+// ---- Debug call tracing + freeze watchdog (see include/trace.h) ----
+#include <thread>
+#include <atomic>
+namespace {
+    constexpr int kTraceMaxDepth = 512;
+    constexpr int kTraceMaxThreads = 16;
+    struct TraceStack {
+        const char* names[kTraceMaxDepth];
+        std::atomic<int> depth{0};
+        std::atomic<uint64_t> frames{0}; // incremented each time the per-frame actor update function is entered
+        std::atomic<bool> is_game{false};
+    };
+    TraceStack g_trace_stacks[kTraceMaxThreads];
+    std::atomic<int> g_trace_count{0};
+    thread_local TraceStack* t_trace = nullptr;
+
+    TraceStack* trace_get() {
+        if (t_trace == nullptr) {
+            int idx = g_trace_count.fetch_add(1);
+            if (idx >= kTraceMaxThreads) {
+                idx = kTraceMaxThreads - 1;
+            }
+            t_trace = &g_trace_stacks[idx];
+        }
+        return t_trace;
+    }
+
+    void trace_watchdog() {
+        uint64_t last_frames = 0;
+        int stalled = 0;
+        bool dumped = false;
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            uint64_t frames = 0;
+            TraceStack* game = nullptr;
+            int n = g_trace_count.load();
+            if (n > kTraceMaxThreads) n = kTraceMaxThreads;
+            for (int i = 0; i < n; i++) {
+                if (g_trace_stacks[i].is_game.load()) {
+                    game = &g_trace_stacks[i];
+                    frames = game->frames.load();
+                }
+            }
+            if (game == nullptr) continue;
+            if (frames == last_frames && frames > 0) {
+                stalled++;
+            } else {
+                stalled = 0;
+                dumped = false;
+            }
+            last_frames = frames;
+            if (stalled >= 3 && !dumped) {
+                dumped = true;
+                for (int sample = 0; sample < 3; sample++) {
+                    int d = game->depth.load();
+                    if (d > kTraceMaxDepth) d = kTraceMaxDepth;
+                    fprintf(stderr, "[freeze] sample %d: call stack depth %d (top first):\n", sample, d);
+                    for (int i = d - 1; i >= 0 && i >= d - 40; i--) {
+                        fprintf(stderr, "[freeze]   %s\n", game->names[i] ? game->names[i] : "?");
+                    }
+                    fflush(stderr);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                }
+            }
+        }
+    }
+}
+
+extern "C" void coop_trace_enter(const char* name) {
+    TraceStack* t = trace_get();
+    int d = t->depth.load(std::memory_order_relaxed);
+    if (d >= 0 && d < kTraceMaxDepth) {
+        t->names[d] = name;
+    }
+    t->depth.store(d + 1, std::memory_order_relaxed);
+    if (strcmp(name, "func_global_asm_80678824") == 0) { // per-frame actor update (not patched)
+        t->is_game.store(true);
+        t->frames.fetch_add(1);
+    }
+}
+
+extern "C" void coop_trace_leave() {
+    TraceStack* t = trace_get();
+    int d = t->depth.load(std::memory_order_relaxed);
+    if (d > 0) {
+        t->depth.store(d - 1, std::memory_order_relaxed);
+    }
+}
+
+
+#ifdef _WIN32
+#include <Windows.h>
+// Debug: on a fatal exception, print its details and the recompiled call stack of the faulting thread.
+static LONG WINAPI coop_exception_handler(EXCEPTION_POINTERS* info) {
+    DWORD code = info->ExceptionRecord->ExceptionCode;
+    if ((code & 0xC0000000) != 0xC0000000) {
+        return EXCEPTION_CONTINUE_SEARCH; // not an error (C++ exceptions, debugger messages...)
+    }
+    static std::atomic<bool> reported{false};
+    if (reported.exchange(true)) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    fprintf(stderr, "[crash] exception code 0x%08lX at address %p\n", (unsigned long)code, info->ExceptionRecord->ExceptionAddress);
+    if (code == EXCEPTION_ACCESS_VIOLATION && info->ExceptionRecord->NumberParameters >= 2) {
+        fprintf(stderr, "[crash] access violation: %s address %p\n",
+            info->ExceptionRecord->ExceptionInformation[0] == 0 ? "reading" : (info->ExceptionRecord->ExceptionInformation[0] == 1 ? "writing" : "executing"),
+            (void*)info->ExceptionRecord->ExceptionInformation[1]);
+    }
+    HMODULE mod = nullptr;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)info->ExceptionRecord->ExceptionAddress, &mod) && mod) {
+        fprintf(stderr, "[crash] module base %p, offset 0x%llX\n", (void*)mod, (unsigned long long)((char*)info->ExceptionRecord->ExceptionAddress - (char*)mod));
+    }
+    if (t_trace != nullptr) {
+        int d = t_trace->depth.load();
+        if (d > kTraceMaxDepth) d = kTraceMaxDepth;
+        fprintf(stderr, "[crash] recompiled call stack of the faulting thread, depth %d (top first):\n", d);
+        for (int i = d - 1; i >= 0 && i >= d - 40; i--) {
+            fprintf(stderr, "[crash]   %s\n", t_trace->names[i] ? t_trace->names[i] : "?");
+        }
+    } else {
+        fprintf(stderr, "[crash] faulting thread has no recompiled call stack\n");
+    }
+    fflush(stderr);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
+    setvbuf(stdout, nullptr, _IONBF, 0); // debug: unbuffered so recomp_printf survives crashes
+    setvbuf(stderr, nullptr, _IONBF, 0);
+    std::thread(trace_watchdog).detach();
+#ifdef _WIN32
+    AddVectoredExceptionHandler(1, coop_exception_handler);
+#endif
     recomp::Version project_version{};
     if (!recomp::Version::from_string(version_string, project_version)) {
         ultramodern::error_handling::message_box(("Invalid version string: " + version_string).c_str());
@@ -793,6 +928,8 @@ int main(int argc, char** argv) {
     REGISTER_FUNC(recomp_get_lightning_frequency);
     REGISTER_FUNC(recomp_get_cutscene_bordering);
     REGISTER_FUNC(recomp_get_mp_enabled);
+    REGISTER_FUNC(recomp_get_coop_enabled);
+    REGISTER_FUNC(recomp_get_coop_debug);
     REGISTER_FUNC(recomp_get_ui_bounds);
     REGISTER_FUNC(recomp_get_ui_pillar);
     REGISTER_FUNC(recomp_get_gyro_deltas);

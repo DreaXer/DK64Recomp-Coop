@@ -281,10 +281,26 @@ static void add_technical_options(recomp::config::Config &config) {
         multiplayer_options,
         dk64::MultiplayerEnabled::Off
     );
+    // Co-op (experimental)
+    static EnumOptionVector coop_options = {
+        {dk64::CoopEnabled::Off, "Off", "Off"},
+        {dk64::CoopEnabled::On, "On", "On"}
+    };
+    config.add_enum_option(
+        dk64::configkeys::technical::coop_enabled,
+        "Enable Story Co-op (2P)",
+        "Experimental 2-player co-op in story mode, reusing the Kong Battle engine. Assign two controllers in the Controls menu first. Currently only active in Jungle Japes.",
+        coop_options,
+        dk64::CoopEnabled::Off
+    );
 }
 
 dk64::MultiplayerEnabled dk64::get_multiplayer_enabled() {
     return get_technical_config_enum_value<dk64::MultiplayerEnabled>(dk64::configkeys::technical::multiplayer_enabled);
+}
+
+dk64::CoopEnabled dk64::get_coop_enabled() {
+    return get_technical_config_enum_value<dk64::CoopEnabled>(dk64::configkeys::technical::coop_enabled);
 }
 
 static void set_control_defaults() {

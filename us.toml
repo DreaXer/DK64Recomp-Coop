@@ -2,6 +2,7 @@
 
 [input]
 entrypoint = 0x80000400
+trace_mode = false  # debug: call tracing, see include/trace.h
 # Paths are relative to the location of this config file.
 #elf_path = "donkeykong64.us.elf"
 symbols_file_path = "DK64Syms/dump.toml"
