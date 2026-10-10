@@ -1,3 +1,4 @@
+extern int coop_colour_active(void);
 #include "common_structs.h"
 #include "ui.h"
 #include "patches_ui.h"
@@ -68,6 +69,7 @@ Gfx *popHUD(Gfx *dl, u8 alignment) {
 
 extern Mtx identity_fixed_mtx;
 extern void *coop_sprite_mtx(void *, int, void *);
+extern int coop_sprite_slot(void);
 extern s32 cur_drawn_model_transform_id;
 extern s32 cur_model_transform_id_offset;
 extern u8 disable_sprite_interpolation;
@@ -77,6 +79,25 @@ Gfx *pop_model_matrix_group(Gfx *dl);
 
 //@recomp: Drawing sprite gfx function
 extern u8 cc_number_of_players;
+
+// ---- Story co-op: one HUD per player (counters), shrunk to fit a split-screen half ----
+// The HUD arrays (PlayerHUD) are allocated for 2 players in co-op (see func_global_asm_806F833C). P1's items are laid
+// out in the top half of the screen, P2's in the bottom half; every HUD routine reads the global
+// D_global_asm_80754280, so P2's HUD is drawn/updated by pointing it at the second array.
+#define COOP_HUD_SIZE  0.60f // size of HUD sprites and numbers (1.0 = original size)
+#define COOP_HUD_POS_Y 0.5f  // vertical compression of the HUD layout (full height -> one half)
+int coop_hud_n = 1;          // number of HUD arrays allocated (2 in co-op)
+static int coop_hud_drawing = 0;
+// Troff 'n' Scoff counter (HUD item 0xD): Kong shown on each player's HUD (the game keeps a single global one)
+static u8 coop_tns_kong[2] = {0, 0};
+extern s32 D_global_asm_80754288;
+extern void *func_global_asm_806FACE8(u32 arg0);
+static void *coop_hud_sprite(u32 idx);
+static int coop_hud_p = 0; // player whose HUD is being drawn
+extern int coop_hud_owner(void);
+extern u8 current_character_index[];
+static int coop_hud_on(void) { return coop_hud_n == 2 && cc_number_of_players == 1; }
+static f32 coop_hud_sz(void) { return coop_hud_on() ? COOP_HUD_SIZE : 1.0f; }
 
 RECOMP_PATCH Gfx * func_global_asm_80715E94(Struct80717D84* sprite, Gfx *dl, s16 arg2) {
     s32 i;
@@ -177,7 +198,7 @@ RECOMP_PATCH Gfx * func_global_asm_80715E94(Struct80717D84* sprite, Gfx *dl, s16
             }
         }
     }
-    gSPMatrix(temp_s0++, osVirtualToPhysical(coop_sprite_mtx(sprite->unk128[(cc_number_of_players > 1) ? cc_player_index : 0][D_global_asm_807444FC], raw_alignment, sprite->unk28)), G_MTX_PUSH | G_MTX_MUL | G_MTX_MODELVIEW);
+    gSPMatrix(temp_s0++, osVirtualToPhysical(coop_sprite_mtx(sprite->unk128[coop_sprite_slot()][D_global_asm_807444FC], raw_alignment, sprite->unk28)), G_MTX_PUSH | G_MTX_MUL | G_MTX_MODELVIEW);
     for (i = 0; i < sprite->unk380; i++) {
         if ((D_global_asm_807F6009 != 5) || (D_global_asm_807F600C != sprite->unk370[i])) {
             gDPPipeSync(temp_s0++);
@@ -291,7 +312,6 @@ RECOMP_PATCH Gfx *func_global_asm_806F9D8C(s32 arg0, Struct806FA504_arg1 *arg1, 
     }
     // dl = alignHUDTopBottom(dl, alignment, temp_v0_3->unk4, temp_v0_3->unk8);
     gSPMatrix(dl++, &D_2000080, G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH);
-    guTranslate(&sp74->unk8[D_global_asm_807444FC], arg1->unk4 * (1.0f - temp_f0), arg1->unk8 * (1.0f - temp_f0), 0.0f);
 
     switch (D_global_asm_80754280->hud_item[arg0].unk_2c) {
         case 1:
@@ -308,6 +328,25 @@ RECOMP_PATCH Gfx *func_global_asm_806F9D8C(s32 arg0, Struct806FA504_arg1 *arg1, 
             }
             _sprintf(sp6C, "%d", var_a2);
             break;
+    }
+    {
+        f32 s_ = coop_hud_sz();
+        f32 tx_ = arg1->unk4 * (1.0f - temp_f0);
+        f32 ty_ = arg1->unk8 * (1.0f - temp_f0);
+        if (s_ == 1.0f) {
+            guTranslate(&sp74->unk8[D_global_asm_807444FC], tx_, ty_, 0.0f);
+        } else {
+            // @coop: shrink the number around its anchor (the screen position of the item), then slide
+            float mf_[4][4];
+            int r_, c_;
+            for (r_ = 0; r_ < 4; r_++) for (c_ = 0; c_ < 4; c_++) mf_[r_][c_] = (r_ == c_) ? 1.0f : 0.0f;
+            mf_[0][0] = s_;
+            mf_[1][1] = s_;
+            // anchor = position of the item's sprite, so the number keeps its (scaled) distance to the sprite
+            mf_[3][0] = tx_ + (f32)(D_global_asm_80754280->hud_item[arg0].screen_x * 4) * (1.0f - s_);
+            mf_[3][1] = ty_ + (f32)(D_global_asm_80754280->hud_item[arg0].screen_y * 4) * (1.0f - s_);
+            guMtxF2L(mf_, &sp74->unk8[D_global_asm_807444FC]);
+        }
     }
     gSPMatrix(dl++, &sp74->unk8[D_global_asm_807444FC], G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_PUSH);
     gDPPipeSync(dl++);
@@ -452,7 +491,17 @@ RECOMP_PATCH void func_global_asm_806F9744(Struct806F9744_arg0 *arg0, s32 arg1, 
     if (arg1 == 3) {
         changeActorColor(0xFF, 0, 0, 0xFF);
     }
-    temp_s0->unk8 = drawSpriteAtPosition(func_global_asm_806FACE8(arg1), 1.0f, x, y, -10.0f);
+    {
+        // @coop: the item sprite depends on the Kong (func_global_asm_806FACE8 reads player 0's): show P2's Kong for P2's HUD
+        u8 saved_kong_ = current_character_index[0];
+        void *spr_;
+        if (coop_hud_on() && coop_hud_drawing && coop_hud_p == 1) {
+            current_character_index[0] = current_character_index[1];
+        }
+        spr_ = coop_hud_sprite((u32)arg1);
+        current_character_index[0] = saved_kong_;
+        temp_s0->unk8 = drawSpriteAtPosition(spr_, coop_hud_sz(), x, y, -10.0f);
+    }
     temp_s0->unk2 = 0;
     if (arg1 == 7) {
         temp_s0->unk4 = 1;
@@ -2558,7 +2607,7 @@ RECOMP_PATCH void func_global_asm_806AB4EC(PauseAAD *arg0, SpriteData *arg1, s32
     if ((s32)arg1 < 0) {
         var_v0 = drawSpriteAtPosition(arg1, arg4, arg2, arg3, -10.0f);
     } else {
-        temp_a0 = func_global_asm_806FACE8((u32) arg1);
+        temp_a0 = coop_hud_sprite((u32) arg1);
         var_v0 = drawSpriteAtPosition(temp_a0, arg4, arg2, arg3, -10.0f);
     }
     var_v0_2 = 7;
@@ -3022,7 +3071,7 @@ RECOMP_PATCH void func_global_asm_805FD088(Struct805FD088 *arg0, Gfx **arg1, Gfx
         gSPSetGeometryMode(dl++, G_SHADE | G_CULL_BACK | G_SHADING_SMOOTH);
         dl = func_global_asm_8062BF24(dl, arg0);
         dl = func_global_asm_80701CA0(dl);
-        if (cc_number_of_players == 1 || (recomp_get_coop_enabled() && current_map == MAP_JAPES)) { // co-op: story rendering
+        if (cc_number_of_players == 1 || (recomp_get_coop_enabled() && coop_colour_active())) { // co-op: story rendering
             dl = func_global_asm_807007B8(dl);
         }
         dl = func_global_asm_8068C20C(dl, 1);
@@ -3411,7 +3460,7 @@ RECOMP_PATCH void func_global_asm_806F833C(s32 arg0) {
     s32 playerCount;
 
     playerCount = cc_number_of_players;
-    if (cc_number_of_players == 1 && recomp_get_coop_enabled() && current_map == MAP_JAPES) {
+    if (cc_number_of_players == 1 && recomp_get_coop_enabled() && coop_colour_active()) {
         playerCount = 2;
     }
     sp96 = D_global_asm_80744544;
@@ -3421,12 +3470,15 @@ RECOMP_PATCH void func_global_asm_806F833C(s32 arg0) {
     }
     if (arg0 != 0) {
         D_global_asm_80754280 = _malloc(playerCount * sizeof(PlayerHUD));
+        coop_hud_n = playerCount;
         func_global_asm_80611690(D_global_asm_80754280);
         D_global_asm_80754284 = NULL;
     }
     for (playerIndex = 0; playerIndex < playerCount; playerIndex++) {
         pad88 = &D_global_asm_807FC950[playerIndex];
-        sp84 = &pad88->character_progress[func_global_asm_806C8DE0(playerIndex)];
+        // Per-Kong counters (bananas, coins, instrument ammo) live in P1's progress for both Kongs (that is where pickups
+        // of P2's Kong are stored); the shared-type pools (oranges, ammo, crystals, film) are per player ([playerIndex]).
+        sp84 = &D_global_asm_807FC950[(playerCount == 2 && cc_number_of_players == 1) ? 0 : playerIndex].character_progress[func_global_asm_806C8DE0(playerIndex)];
         playerHUD = &D_global_asm_80754280[playerIndex].hud_item[0];
         for (HUDItemIndex = 0; HUDItemIndex < 0xF; HUDItemIndex++) {
             var_s7 = 0;
@@ -3541,6 +3593,10 @@ RECOMP_PATCH void func_global_asm_806F833C(s32 arg0) {
                     func_global_asm_806F8004(15.5f, 26.0f, &playerHUD[HUDItemIndex].unk_10, &playerHUD[HUDItemIndex].unk_14, &playerHUD[HUDItemIndex].unk_18);
                     break;
             }
+            if (playerCount == 2 && cc_number_of_players == 1) {
+                // @coop: lay the HUD out in this player's half of the screen
+                playerHUD[HUDItemIndex].screen_y = (s32)(playerHUD[HUDItemIndex].screen_y * COOP_HUD_POS_Y) + (playerIndex ? 120 : 0);
+            }
             playerHUD[HUDItemIndex].unk_2d = var_s7;
             if (var_s7 & 0xFF) {
                 playerHUD[HUDItemIndex].unk_2c = 1;
@@ -3554,4 +3610,222 @@ RECOMP_PATCH void func_global_asm_806F833C(s32 arg0) {
     if (current_map == MAP_HELM || current_map == MAP_CAVES_BEETLE_RACE) {
         func_global_asm_806FB370(5, 0, 1);
     }
+}
+
+
+// ---- Story co-op: HUD drawing / state for both players ----
+extern Gfx *func_global_asm_806FA5A4(s32, Gfx *);
+extern Gfx *func_global_asm_806FA7BC(s32, Gfx *);
+extern Gfx *func_global_asm_806FA9C0(s32, Gfx *);
+extern void func_global_asm_806F9518(s32);
+void func_global_asm_806F8BC4(s32 HUDItemIndex, u8 arg1, s32 arg2);
+
+RECOMP_PATCH Gfx *func_global_asm_806FAB20(Gfx *dl) {
+    s32 p_first, p_last;
+    s32 HUDItemIndex;
+    s32 p;
+    s32 n;
+    PlayerHUD *base;
+
+    if (cc_number_of_players >= 2) {
+        return dl;
+    }
+    n = coop_hud_on() ? 2 : 1;
+    if (n == 2) {
+        // Re-read the per-Kong counter pointers when a player changed Kong (tag barrel)
+        static u8 last_kong[2] = {255, 255};
+        int changed = 0;
+        for (p = 0; p < 2; p++) {
+            if (last_kong[p] != current_character_index[p]) {
+                last_kong[p] = current_character_index[p];
+                changed = 1;
+            }
+        }
+        if (changed) {
+            func_global_asm_806F833C(0);
+        }
+    }
+    gDPPipeSync(dl++);
+    gSPMatrix(dl++, &D_2000180, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+
+    base = D_global_asm_80754280;
+    {   // co-op: no HUD items during the full-screen scenes, except the HUD of the Kong that is feeding Troff 'n' Scoff.
+        // The sprites of the HUD items live on their own once created, so skipping the draw is not enough: the items of
+        // a hidden HUD are freed (their state saved) and shown again when the HUD comes back.
+        extern int coop_fullscreen_query(void);
+        extern int coop_feeder_query(void);
+        static u16 saved_mask[2] = {0, 0};
+        static u8 saved_arg[2][15];
+        static u8 hidden[2] = {0, 0};
+        static s32 saved_map[2] = {-1, -1};
+        int fd = -2, k;
+        p_first = 0; p_last = n;
+        if (n == 2) {
+            if (coop_fullscreen_query() >= 0) fd = coop_feeder_query(); // -1: nobody shown, 0/1: that HUD only
+            for (k = 0; k < 2; k++) {
+                int shown = (fd == -2) || (fd == k);
+                D_global_asm_80754280 = base + k;
+                if (!shown && !hidden[k]) {
+                    int it;
+                    saved_mask[k] = 0;
+                    saved_map[k] = (s32)current_map;
+                    for (it = 0; it < 0xF; it++) {
+                        if (base[k].hud_item[it].hud_state != 0) {
+                            saved_mask[k] |= (1 << it);
+                            saved_arg[k][it] = base[k].hud_item[it].unk_24;
+                            func_global_asm_806F9518(it);
+                        }
+                    }
+                    hidden[k] = 1;
+                } else if (shown && hidden[k]) {
+                    int it;
+                    coop_hud_drawing = 1;
+                    for (it = 0; it < 0xF; it++) {
+                        // items saved in another map are not restored (the map change already reset the HUD: they came back for good)
+                        if (saved_map[k] == (s32)current_map && (saved_mask[k] & (1 << it)) && base[k].hud_item[it].hud_state == 0) {
+                            func_global_asm_806F8BC4(it, saved_arg[k][it], 0);
+                        }
+                    }
+                    coop_hud_drawing = 0;
+                    hidden[k] = 0;
+                }
+            }
+            D_global_asm_80754280 = base;
+            if (fd == -1) {
+                return dl;
+            }
+            if (fd >= 0) { p_first = fd; p_last = fd + 1; }
+        }
+    }
+    for (p = p_first; p < p_last; p++) {
+        D_global_asm_80754280 = base + p;
+        coop_hud_drawing = (n == 2);
+        coop_hud_p = p;
+        for (HUDItemIndex = 0; HUDItemIndex < 0xF; HUDItemIndex++) {
+            switch (D_global_asm_80754280->hud_item[HUDItemIndex].hud_state) {
+                case 0:
+                    func_global_asm_806F9518(HUDItemIndex);
+                    break;
+                case 1:
+                    dl = func_global_asm_806FA5A4(HUDItemIndex, dl);
+                    break;
+                case 2:
+                    dl = func_global_asm_806FA7BC(HUDItemIndex, dl);
+                    break;
+                case 3:
+                    dl = func_global_asm_806FA9C0(HUDItemIndex, dl);
+                    break;
+            }
+        }
+    }
+    D_global_asm_80754280 = base;
+    coop_hud_drawing = 0;
+    coop_hud_p = 0;
+    return dl;
+}
+
+// Make an item of the HUD appear: the HUD of the player who triggered it (see coop_hud_owner)
+RECOMP_PATCH void func_global_asm_806F8BC4(s32 HUDItemIndex, u8 arg1, s32 arg2) {
+    // Troff 'n' Scoff: the room keeps the banana counter (item 0) of the current Kong on screen. In co-op, each player gets his own.
+    if (HUDItemIndex == 0 && current_map == MAP_TROFF_N_SCOFF && coop_hud_on() && !coop_hud_drawing && (cc_number_of_players < 2)) {
+        PlayerHUD *base_ = D_global_asm_80754280;
+        int p_;
+        coop_hud_drawing = 1; // bypass coop_hud_owner(): the HUD is selected here
+        for (p_ = 0; p_ < 2; p_++) {
+            D_global_asm_80754280 = base_ + p_;
+            func_global_asm_806F8BC4(0, arg1, arg2);
+        }
+        D_global_asm_80754280 = base_;
+        coop_hud_drawing = 0;
+        return;
+    }
+    PlayerHUD *ph;
+    if ((cc_number_of_players < 2) && (!gameIsInDKTVMode())) {
+        if ((HUDItemIndex != 8) || (func_global_asm_806F8BC4(9, arg1, arg2 + 0xA), (current_map != MAP_SNIDES_HQ))) {
+            ph = D_global_asm_80754280;
+            if (coop_hud_on() && !coop_hud_drawing) {
+                ph += coop_hud_owner();
+            }
+            ph->hud_item[HUDItemIndex].unk_24 = arg1;
+            if (ph->hud_item[HUDItemIndex].hud_state == 0) {
+                ph->hud_item[HUDItemIndex].counter_timer = arg2;
+            } else {
+                ph->hud_item[HUDItemIndex].counter_timer = 0;
+            }
+            ph->hud_item[HUDItemIndex].hud_state = 1;
+            if (ph->hud_item[HUDItemIndex].freeze_timer == 0) {
+                ph->hud_item[HUDItemIndex].freeze_timer = arg1 != 0;
+            }
+        }
+    }
+}
+
+static void *coop_hud_sprite(u32 idx) {
+    if (idx == 0xD && coop_hud_on() && coop_hud_drawing && coop_hud_p >= 0 && coop_hud_p < 2) {
+        s32 saved = D_global_asm_80754288;
+        void *r;
+        D_global_asm_80754288 = coop_tns_kong[coop_hud_p];
+        r = func_global_asm_806FACE8(idx);
+        D_global_asm_80754288 = saved;
+        return r;
+    }
+    return func_global_asm_806FACE8(idx);
+}
+
+extern void func_global_asm_806F8D58(s32, s32);
+// Hide a HUD item on one player's HUD (the original hides on P1's HUD only)
+void coop_hud_hide_item(int item, int player) {
+    PlayerHUD *base_ = D_global_asm_80754280;
+    if (coop_hud_on() && player >= 0 && player < 2) {
+        D_global_asm_80754280 = base_ + player;
+    }
+    func_global_asm_806F8D58(item, 0);
+    D_global_asm_80754280 = base_;
+}
+
+// ---- Story co-op: banana counter of the Troff 'n' Scoff room (HUD item 0xD) ----
+// The original script shows the counter of the Kong that triggers it on P1's HUD only. In co-op each player gets the
+// counter of his own Kong on his own HUD; the hide command hides both.
+extern void func_global_asm_806FAC64(u8);
+extern void func_global_asm_806F8D58(s32, s32);
+RECOMP_PATCH void func_global_asm_8064B514(u8 arg0, u8 arg1, s8 arg2, s16 arg3) {
+    PlayerHUD *base = D_global_asm_80754280;
+    if (coop_hud_on() && character_change_array[0].playerPointer && character_change_array[1].playerPointer) {
+        int p;
+        for (p = 0; p < 2; p++) {
+            D_global_asm_80754280 = base + p;
+            coop_hud_drawing = 1; // bypass coop_hud_owner(): the HUD is already selected
+            if (arg3) {
+                func_global_asm_806F8D58(0xD, 0);
+            } else {
+                coop_tns_kong[p] = current_character_index[p];
+                func_global_asm_806FAC64(current_character_index[p]);
+                func_global_asm_806F8BC4(0xD, 1, 0);
+            }
+        }
+        D_global_asm_80754280 = base;
+        coop_hud_drawing = 0;
+        return;
+    }
+    func_global_asm_806FAC64(arg2);
+    if (arg3) {
+        func_global_asm_806F8D58(0xD, 0);
+    } else {
+        func_global_asm_806F8BC4(0xD, 1, 0);
+    }
+}
+
+// Free the counters of every HUD item (map change): both players' HUDs
+RECOMP_PATCH void func_global_asm_806F95C8(void) {
+    s32 HUDItemIndex;
+    s32 p;
+    PlayerHUD *base = D_global_asm_80754280;
+    s32 n = (coop_hud_n == 2) ? 2 : 1;
+    for (p = 0; p < n; p++) {
+        D_global_asm_80754280 = base + p;
+        for (HUDItemIndex = 0; HUDItemIndex < 15; HUDItemIndex++) {
+            func_global_asm_806F9518(HUDItemIndex);
+        }
+    }
+    D_global_asm_80754280 = base;
 }

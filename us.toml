@@ -41,6 +41,12 @@ func = "func_global_asm_8060B140"
 text = "load_dk64_overlay(ctx->r4, 0, 0);"
 before_vram = 0x8060B140
 
+# co-op: positional sounds consider P2's camera too (closest of P1/P2 wins)
+[[patches.hook]]
+func = "playSoundAtPosition"
+text = "if (ctx->r9 < 2) { ctx->r9 = 2; }"
+before_vram = 0x806086E8
+
 #allocate 4 extra bytes per actor
 #[[patches.hook]]
 #func = "func_global_asm_80678050"
@@ -66,3 +72,24 @@ before_vram = 0x8060B140
 func = "func_global_asm_80601D24"
 vram = 0x80601DE4
 value = 0x24150000 #li $s5, 0
+
+# co-op: Japes cannon cutscene. The cutscene locks the controllers (bit 0x10 of D_global_asm_8076A0B1 zeroes every pad in
+# the input routine); the Kong that is NOT in the cannon keeps its pad. Kong in the cannon = control_state 0x42 / 0x45.
+[[patches.hook]]
+func = "func_global_asm_8060AC7C"
+text = """{
+    uint32_t j_ = ctx->r18;
+    if (j_ < 2 && MEM_BU((int32_t)0x807444EC, 0) == 1 && MEM_W((int32_t)0x8076A0A8, 0) == 7 && MEM_H((int32_t)0x807476F4, 0) == 22) {
+        int own_ = -1;
+        for (int k_ = 0; k_ < 2; k_++) {
+            int32_t cc_ = MEM_W((int32_t)0x807FC924, 0) + k_ * 0x2F0; // character_change_array is a pointer
+            if (cc_ < 0 && MEM_BU(cc_, 0) != 0 && MEM_W(cc_ + 4, 0) < 0) {
+                int32_t pp_ = MEM_W(cc_ + 4, 0);
+                uint32_t st_ = MEM_BU(pp_, 0x154);
+                if (st_ == 0x42 || st_ == 0x45) { own_ = k_; break; }
+            }
+        }
+        if (own_ >= 0 && (uint32_t)own_ != j_) { ctx->r25 &= ~(gpr)0x10; }
+    }
+}"""
+before_vram = 0x8060AFF8

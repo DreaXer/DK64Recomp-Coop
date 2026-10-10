@@ -35,7 +35,7 @@ index c76a1dc..ad1883f 100644
      break;
      case SDL_EventType::SDL_CONTROLLERDEVICEREMOVED:
 diff --git a/recompinput/src/players.cpp b/recompinput/src/players.cpp
-index 08cb3f3..2073390 100644
+index 08cb3f3..bc43a52 100644
 --- a/recompinput/src/players.cpp
 +++ b/recompinput/src/players.cpp
 @@ -2,6 +2,10 @@
@@ -157,7 +157,7 @@ index 08cb3f3..2073390 100644
  size_t players::get_number_of_assigned_players() {
      return PlayerState.players.get_count();
  }
-@@ -129,6 +234,95 @@ InputDevice players::get_player_input_device(int player_index, bool temp_player)
+@@ -129,6 +234,134 @@ InputDevice players::get_player_input_device(int player_index, bool temp_player)
      }
  }
  
@@ -172,17 +172,30 @@ index 08cb3f3..2073390 100644
 +}
 +
 +void players::restore_saved_assignment() {
-+    // Only restore when nothing is assigned yet; wait until every saved controller is connected.
-+    if (PlayerState.players.get_count() > 0 || saved_players.empty() || playerassignment::is_active()) {
++    // Only restore when nothing is assigned yet, or when an assigned controller was unplugged / went to sleep (the assignment
++    // keeps its dead SDL pointer, the controller comes back as a new device and was never re-assigned: players had to be
++    // re-assigned by hand). Wait until every saved controller is connected.
++    bool stale = false;
++    for (size_t i = 0; i < PlayerState.players.get_count(); i++) {
++        SDL_GameController* gc = PlayerState.players[i].controller;
++        if (gc != nullptr && SDL_GameControllerGetAttached(gc) == SDL_FALSE) {
++            stale = true;
++        }
++    }
++    if ((PlayerState.players.get_count() > 0 && !stale) || saved_players.empty() || playerassignment::is_active()) {
 +        return;
++    }
++    if (stale) {
++        printf("[assignment] an assigned controller was disconnected: trying to restore the saved assignment\n");
++        fflush(stdout);
 +    }
 +
 +    auto connected = connected_controllers();
 +    std::vector<bool> used(connected.size(), false);
-+    PlayerArray restored;
-+    for (const SavedPlayer& saved : saved_players) {
++    std::vector<int> match(saved_players.size(), -1);
++    for (size_t p = 0; p < saved_players.size(); p++) {
++        const SavedPlayer& saved = saved_players[p];
 +        if (saved.keyboard) {
-+            restored.add_keyboard_player();
 +            continue;
 +        }
 +        int found = -1;
@@ -209,13 +222,39 @@ index 08cb3f3..2073390 100644
 +                }
 +            }
 +        }
-+        if (found < 0) {
-+            printf("[assignment] restore waiting: a saved controller isn't connected yet\n");
-+            fflush(stdout);
-+            return; // a saved controller isn't connected (yet)
++        if (found >= 0) {
++            used[found] = true;
++            match[p] = found;
 +        }
-+        used[found] = true;
-+        restored.add_controller_player(connected[found]);
++    }
++    // 3) a controller that comes back can report another GUID (crc/version/serial change after a reconnection, e.g. Bluetooth):
++    // give the remaining connected controllers to the remaining saved players, in order.
++    PlayerArray restored;
++    {
++        size_t next = 0;
++        for (size_t p = 0; p < saved_players.size(); p++) {
++            if (saved_players[p].keyboard || match[p] >= 0) {
++                continue;
++            }
++            while (next < connected.size() && used[next]) {
++                next++;
++            }
++            if (next >= connected.size()) {
++                printf("[assignment] restore waiting: a saved controller isn't connected yet (%zu connected)\n", connected.size());
++                fflush(stdout);
++                return;
++            }
++            printf("[assignment] saved controller %zu not matched by GUID: using connected controller %zu\n", p, next);
++            used[next] = true;
++            match[p] = (int)next;
++        }
++    }
++    for (size_t p = 0; p < saved_players.size(); p++) {
++        if (saved_players[p].keyboard) {
++            restored.add_keyboard_player();
++        } else {
++            restored.add_controller_player(connected[match[p]]);
++        }
 +    }
 +
 +    // The controller profiles must exist for every controller before they can be bound to players. A controller that
@@ -253,7 +292,7 @@ index 08cb3f3..2073390 100644
  // playerassignment start
  
  bool playerassignment::is_active() {
-@@ -149,10 +343,7 @@ void playerassignment::stop_and_close_modal() {
+@@ -149,10 +382,7 @@ void playerassignment::stop_and_close_modal() {
      PlayerState.queue_close_player_assignment_modal = true;
  }
  
@@ -265,7 +304,7 @@ index 08cb3f3..2073390 100644
      for (int i = 0; i < players::get_number_of_assigned_players(); i++) {
          Player &player = PlayerState.players[i];
          if (player.controller != nullptr) {
-@@ -166,6 +357,14 @@ void playerassignment::commit_player_assignment() {
+@@ -166,6 +396,14 @@ void playerassignment::commit_player_assignment() {
      }
  }
  

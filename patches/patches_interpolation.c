@@ -59,6 +59,9 @@ void set_sprite_interpolation_state(void) {
 }
 
 extern u8 cc_player_index;
+extern int coop_cannon_other_cam(Actor *cam);
+extern int coop_cs_other_cam(int ci);
+extern Actor *coop_fx_cam(Actor *cam, Actor *target);
 
 Gfx *handle_interpolation(Gfx * dl, interpolationIDs id, u8 decrement) {
     skipInterpHandler(&interpolation_disable_timer, &skip_interpolation, decrement);
@@ -132,7 +135,23 @@ RECOMP_PATCH void func_global_asm_8061DBD4(Actor* arg0, f32* arg1, f32* arg2, f3
     func_global_asm_8061D1FC(arg0);
     arg0->z_rotation = func_global_asm_806CC190(arg0->z_rotation, temp_v0->z_rotation, 20.0f);
     func_global_asm_8061C0FC(AAD);
-    switch (is_cutscene_active) {
+    // @coop: during the Japes cannon cutscene the other Kong's camera keeps following its Kong (normal mode)
+    // @coop: Japes cannon. The other Kong's camera must not be affected by the cutscene (the first frames run before the
+    // cannon user is known, and the follow logic then keeps following the cutscene path). Its view is therefore the one it had
+    // before the cutscene (saved here when no cutscene is active), translated with its Kong, forced after the update (see below).
+    u8 coop_ci = AAD->unkFB;
+    // The cutscene script state is global: with two cameras it was advanced twice per frame (cutscenes ran at double speed and
+    // ended early). While one view is shown full screen, only that camera runs the script; the other one just follows.
+    int coop_skip = (is_cutscene_active == 1 && (coop_cannon_other_cam(arg0) || coop_cs_other_cam(coop_ci)));
+    static struct { f32 v[15]; u8 ok; } coop_sv[2];
+    if (coop_ci < 2 && is_cutscene_active == 0) {
+        coop_sv[coop_ci].v[0] = *arg1; coop_sv[coop_ci].v[1] = *arg2; coop_sv[coop_ci].v[2] = *arg3;
+        coop_sv[coop_ci].v[3] = *arg4; coop_sv[coop_ci].v[4] = *arg5; coop_sv[coop_ci].v[5] = *arg6;
+        coop_sv[coop_ci].v[6] = temp_v0->position.f[0]; coop_sv[coop_ci].v[7] = temp_v0->position.f[1]; coop_sv[coop_ci].v[8] = temp_v0->position.f[2];
+        coop_sv[coop_ci].v[9] = *arg7; coop_sv[coop_ci].v[10] = *arg8; coop_sv[coop_ci].v[11] = *arg9;
+        coop_sv[coop_ci].ok = 1;
+    }
+    switch (coop_skip ? 0 : is_cutscene_active) {
         case 0:
             if ((AAD->unkAC & 0x100) == 0) {
                 if (loading_zone_transition_speed > 0.0f) {
@@ -391,6 +410,16 @@ RECOMP_PATCH void func_global_asm_8061DBD4(Actor* arg0, f32* arg1, f32* arg2, f3
     if (AAD->unkF2 != 0) {
         func_global_asm_8061EDA0(AAD, arg4, arg5, arg6, AAD->unkC0 * 0.333, 1);
     }
+    if (coop_skip && coop_ci < 2 && coop_sv[coop_ci].ok) {
+        f32 dx = temp_v0->position.f[0] - coop_sv[coop_ci].v[6];
+        f32 dy = temp_v0->position.f[1] - coop_sv[coop_ci].v[7];
+        f32 dz = temp_v0->position.f[2] - coop_sv[coop_ci].v[8];
+        *arg1 = coop_sv[coop_ci].v[0] + dx; *arg2 = coop_sv[coop_ci].v[1] + dy; *arg3 = coop_sv[coop_ci].v[2] + dz;
+        *arg4 = coop_sv[coop_ci].v[3] + dx; *arg5 = coop_sv[coop_ci].v[4] + dy; *arg6 = coop_sv[coop_ci].v[5] + dz;
+        arg0->position.f[0] = *arg1; arg0->position.f[1] = *arg2; arg0->position.f[2] = *arg3;
+        AAD->unk78 = *arg4; AAD->unk7C = *arg5; AAD->unk80 = *arg6;
+        AAD->unk84 = *arg1; AAD->unk88 = *arg2; AAD->unk8C = *arg3;
+    }
     if (!(AAD->unkAC & 0x100)) {
         func_global_asm_80627490(&sp84, &sp80, *arg4, *arg5, *arg6, *arg1, *arg2, *arg3);
         temp_f20 = func_global_asm_80612D10(sp80);
@@ -480,9 +509,11 @@ extern u16 D_global_asm_807FBB34;
 extern s32 func_global_asm_8068A3A0(s32 arg0, u32 *arg1);
 extern f32 func_global_asm_8065D0FC(f32 arg0);
 extern void func_global_asm_8068A404(Actor *arg0, s32 arg1, s32 arg2);
+extern void func_global_asm_8068A350(Actor *arg0, s32 arg1, s32 arg2);
 
 extern int coop_colour_active(void);
-#define COOP_P2_COLOUR 1 // Battle-mode colour index used for Player 2 in story co-op
+extern int coop_colour_index(int player);
+static s32 coop_col_applied[2] = {0, 0}; // last colour index applied to each player's Kong
 
 // @recomp: LOD Handler
 RECOMP_PATCH void func_global_asm_8068A508(void) {
@@ -497,6 +528,9 @@ RECOMP_PATCH void func_global_asm_8068A508(void) {
     s32 i;
     Actor *temp_s0;
 
+    // Tiny's 2nd colour scheme: texture parts swapped (part 1 and part 2)
+    D_global_asm_80750100[5].unkC[0] = 1;
+    D_global_asm_80750100[5].unkC[1] = 2;
     for (i = 0; i < D_global_asm_807FBB34; i++) {
         temp_s0 = D_global_asm_807FB930[i].unk0;
         if (!(temp_s0->object_properties_bitfield & 0x2000)) {
@@ -514,10 +548,15 @@ RECOMP_PATCH void func_global_asm_8068A508(void) {
                                     func_global_asm_8068A404(temp_s0, sp80, D_global_asm_807552F4[PaaD->unk1A4]);
                                 }
                             } else if ((temp_s0->interactable & 1) && coop_colour_active()) {
-                                // Story co-op: P1 keeps the default colours, P2 uses the Battle mode's 2nd colour scheme.
+                                // Story co-op: a Kong gets the Battle mode's 2nd colour scheme only if the other player has the
+                                // same Kong and chose it last. Colour 0 is re-applied once when the 2nd scheme is no longer needed.
                                 PaaD = temp_s0->PaaD;
-                                if (PaaD->unk1A4 == 1) {
-                                    func_global_asm_8068A404(temp_s0, sp80, COOP_P2_COLOUR);
+                                if (PaaD->unk1A4 >= 0 && PaaD->unk1A4 < 2) {
+                                    s32 want = coop_colour_index(PaaD->unk1A4);
+                                    if (want != 0 || coop_col_applied[PaaD->unk1A4] != 0) {
+                                        func_global_asm_8068A404(temp_s0, sp80, want);
+                                        coop_col_applied[PaaD->unk1A4] = want;
+                                    }
                                 }
                             }
                             break;
@@ -1324,6 +1363,7 @@ void clearCutsceneBarInterp(void) {
 
 RECOMP_PATCH void func_global_asm_8061C518(Actor *arg0, Actor *arg1, u8 arg2, s16 arg3, s16 arg4, s16 arg5, s16 arg6, s16 arg7, s16 arg8, s16 arg9, f32 argA) {
     f32 sp3C;
+    arg0 = coop_fx_cam(arg0, arg1);
 
     sp3C = arg1->animation_state->scale[1];
     if (is_cutscene_active == 1) {
@@ -1339,6 +1379,7 @@ RECOMP_PATCH void func_global_asm_8061C518(Actor *arg0, Actor *arg1, u8 arg2, s1
 }
 
 RECOMP_PATCH void func_global_asm_8061C600(Actor *arg0, Actor *arg1, u8 arg2, s16 arg3, s16 arg4, s16 arg5, s16 arg6, s16 arg7, s16 arg8, s16 arg9, f32 argA) {
+    arg0 = coop_fx_cam(arg0, arg1);
     if (is_cutscene_active == 1) {
         func_global_asm_8061D4E4(arg0);
     }

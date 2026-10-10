@@ -278,7 +278,7 @@ extern u8 D_global_asm_807ECD09; // controllers connected (bitmask)
 extern void func_global_asm_8060AA58(u8);
 
 static int coop_map_allowed(void) {
-    return current_map == MAP_JAPES; // first test: Jungle Japes only
+    return current_map == MAP_JAPES || current_map == MAP_JAPES_LOBBY || current_map == MAP_TROFF_N_SCOFF || current_map == MAP_DK_ISLES_OVERWORLD || current_map == MAP_AZTEC || current_map == MAP_JAPES_ARMY_DILLO; // co-op maps
 }
 
 RECOMP_PATCH void func_global_asm_805FB944(u8 arg0) {
@@ -344,11 +344,9 @@ RECOMP_PATCH void func_global_asm_805FB944(u8 arg0) {
         D_global_asm_80750AB8 = COOP_SHARED_SCREEN;
         // Starting a story game restricts input to port 1 (mask 1): other ports get no
         // "newly pressed" buttons. Enable ports 1+2 so P2 gets full input.
-        recomp_printf("[coop] before: connected=%d active=%d\n", (int)D_global_asm_807ECD09, (int)D_global_asm_807ECDF8);
         if ((D_global_asm_807ECDF8 & 3) != (D_global_asm_807ECD09 & 3)) {
             func_global_asm_8060AA58(3);
         }
-        recomp_printf("[coop] after: connected=%d active=%d\n", (int)D_global_asm_807ECD09, (int)D_global_asm_807ECDF8);
     }
     func_global_asm_80610350(arg0, var_a1, var_a2);
     if (D_global_asm_807445A4 == 0) {
@@ -2032,6 +2030,8 @@ RECOMP_PATCH void func_global_asm_806C7D40(s32 arg0) {
             // P2 keeps its own health between maps (only its first spawn / a change of max health takes P1's value)
             static u8 coop_p2_hp_valid = 0;
             s8 keep_hp = (s8)D_global_asm_807FC950[0x306 + 0x2FB];
+            u8 keep_pool[10];
+            for (i = 0; i < 10; i++) keep_pool[i] = D_global_asm_807FC950[0x306 + 0x2F0 + i]; // P2's own ammo/oranges/crystals/film
             u8 keep_mel = D_global_asm_807FC950[0x306 + 0x2FC];
             for (i = 0; i < 0x306; i++) {
                 D_global_asm_807FC950[0x306 + i] = D_global_asm_807FC950[i];
@@ -2039,11 +2039,16 @@ RECOMP_PATCH void func_global_asm_806C7D40(s32 arg0) {
             if (coop_p2_hp_valid && keep_mel == D_global_asm_807FC950[0x2FC] && keep_hp > 0) {
                 D_global_asm_807FC950[0x306 + 0x2FB] = (u8)keep_hp;
             }
+            if (coop_p2_hp_valid) {
+                for (i = 0; i < 10; i++) D_global_asm_807FC950[0x306 + 0x2F0 + i] = keep_pool[i];
+            }
             D_global_asm_807FC950[0x306 + 0x2FD] = 0;
             coop_p2_hp_valid = 1;
         }
-        // P2 plays a different Kong than P1
-        if (current_character_index[1] == current_character_index[0] || current_character_index[1] > 4) {
+        // P2 plays a different Kong than P1, except in a boss arena (the boss is made for one Kong: both players play it)
+        if (current_map == MAP_JAPES_ARMY_DILLO) {
+            current_character_index[1] = current_character_index[0];
+        } else if (current_character_index[1] == current_character_index[0] || current_character_index[1] > 4) {
             current_character_index[1] = (current_character_index[0] + 1) % 5;
         }
     }
@@ -2053,9 +2058,7 @@ RECOMP_PATCH void func_global_asm_806C7D40(s32 arg0) {
         temp_s0 = &character_change_array[i];
         temp_s0->does_player_exist = TRUE;
         cc_player_index = i;
-        recomp_printf("[coop] spawn kong i=%d char=%d cc=%d\n", (int)i, (int)current_character_index[i], (int)cc_number_of_players);
         func_global_asm_806C850C(arg0, i);
-        recomp_printf("[coop] kong %d spawned\n", (int)i);
         temp_s0->playerPointer = gCurrentPlayer;
         if (i == 0) {
             gPlayerPointer = gCurrentPlayer;
@@ -2080,7 +2083,6 @@ RECOMP_PATCH void func_global_asm_806C7D40(s32 arg0) {
         temp_s0->unk270[1] = temp_v0_2->unk6;
         temp_s0->unk270[2] = temp_v0_2->unk8;
         temp_s0->unk270[3] = temp_v0_2->unkA;
-        recomp_printf("[coop] vp %d ok\n", (int)i);
         if (D_global_asm_8074450C == 2) { // original: osViGetCurrentMode() == hi-res mode; the port always runs 240p (=1)
             temp_s0->unk270[0] <<= 1;
             temp_s0->unk270[1] <<= 1;
@@ -2119,7 +2121,6 @@ RECOMP_PATCH void func_global_asm_806C7D40(s32 arg0) {
             func_global_asm_80709464(i);
         }
     }
-    recomp_printf("[coop] loop done\n");
     if (D_global_asm_807FD570 != 0) {
         func_global_asm_806C80E4();
         D_global_asm_807FD570 = 0;
@@ -2158,7 +2159,6 @@ RECOMP_PATCH void func_global_asm_806EE2B8(void) {
     s8 phi_a1;
 
     sp24 = TRUE;
-    recomp_printf("[coop] hitA p=%d D4=%d cs=%d hp=%d+%d ok=%d\n", (int)cc_player_index, (int)extra_player_info_pointer->unkD4, (int)gCurrentPlayer->control_state, (int)COOP_PP_HEALTH(cc_player_index), (int)COOP_PP_2FD(cc_player_index), (int)func_global_asm_806EB400(gCurrentPlayer));
     if (func_global_asm_806EB400(gCurrentPlayer)) {
         phi_a1 = -1;
         func_global_asm_806CA2AC();
@@ -2193,7 +2193,6 @@ RECOMP_PATCH void func_global_asm_806EE454(void) {
     s32 sp24;
 
     sp24 = TRUE;
-    recomp_printf("[coop] hitB p=%d D4=%d cs=%d hp=%d+%d ok=%d\n", (int)cc_player_index, (int)extra_player_info_pointer->unkD4, (int)gCurrentPlayer->control_state, (int)COOP_PP_HEALTH(cc_player_index), (int)COOP_PP_2FD(cc_player_index), (int)func_global_asm_806EB400(gCurrentPlayer));
     func_global_asm_806CA2AC();
     if (func_global_asm_806EB400(gCurrentPlayer) && func_global_asm_806C9974(cc_player_index, -1)) {
         sp24 = FALSE;
@@ -2218,7 +2217,7 @@ RECOMP_PATCH void func_global_asm_806EE454(void) {
     }
 }
 
-// ---- Story co-op: central damage function (identical to the original + debug print) ----
+// ---- Story co-op: central damage function (identical to the original) ----
 extern void func_global_asm_8060E7EC(u8, u8, u8);
 extern void func_multiplayer_80026E20(u8, s8); // overlay (Kong Battle)
 extern s32 D_global_asm_807552EC;
@@ -2232,7 +2231,6 @@ RECOMP_PATCH s32 func_global_asm_806C9974(u8 playerIndex, s8 arg1) {
     // Co-op: a melon slice (+1) picked up by P2 is applied by the deferred pickup queue as "player 0"; heal P2 instead.
     if (recomp_get_coop_enabled() && coop_map_allowed() && arg1 > 0 && coop_melon_pending) {
         // heal goes to the Kong that touched the slice (recorded when the pickup was queued)
-        recomp_printf("[coop] heal: slice owner=%d (call said p=%d)\n", (int)coop_melon_owner, (int)playerIndex);
         playerIndex = coop_melon_owner;
         coop_melon_pending = 0;
     }
@@ -2249,7 +2247,6 @@ RECOMP_PATCH s32 func_global_asm_806C9974(u8 playerIndex, s8 arg1) {
     if (!(D_global_asm_807FBB64 & 0x800)) {
         D_global_asm_807FC950[playerIndex * 0x306 + 0x2FD] += arg1;
     }
-    recomp_printf("[coop] dmg p=%d amt=%d hp=%d+%d\n", (int)playerIndex, (int)arg1, (int)COOP_PP_HEALTH(playerIndex), (int)COOP_PP_2FD(playerIndex));
     if ((COOP_PP_HEALTH(playerIndex) + COOP_PP_2FD(playerIndex)) <= 0) {
         temp2->unk2DC.unk6 |= 0xC0;
         return TRUE;
@@ -2263,8 +2260,32 @@ static int coop_active_here(void) {
     return recomp_get_coop_enabled() && coop_map_allowed();
 }
 int coop_colour_active(void) { return coop_active_here(); }
-static int coop_trace_on = 0;   // debug: verbose per-actor trace once the entrance cutscene is over
-static int coop_trace_lines = 0;
+// Story co-op colours: decided when a player changes Kong, then kept as long as he keeps that Kong.
+// Same Kong as the other player -> the colour index the other one does not use; otherwise index 0.
+static int coop_col_idx[2] = {0, 0};
+static int coop_col_kong[2] = {-1, -1};
+static int coop_col_stamp = -1;
+int coop_colour_index(int player) {
+    int p;
+    if (player < 0 || player > 1 || !coop_active_here()) return 0;
+    if ((int)object_timer != coop_col_stamp) {
+        coop_col_stamp = (int)object_timer;
+        for (p = 0; p < 2; p++) {
+            Actor *me = character_change_array[p].playerPointer;
+            Actor *ot = character_change_array[1 - p].playerPointer;
+            if (!character_change_array[p].does_player_exist || me == NULL) continue;
+            if (coop_col_kong[p] != (int)me->unk58) {
+                coop_col_kong[p] = (int)me->unk58;
+                if (ot != NULL && character_change_array[1 - p].does_player_exist && coop_col_kong[1 - p] != -1 && (int)ot->unk58 == (int)me->unk58) {
+                    coop_col_idx[p] = (coop_col_idx[1 - p] == 1) ? 0 : 1;
+                } else {
+                    coop_col_idx[p] = 0;
+                }
+            }
+        }
+    }
+    return coop_col_idx[player];
+}
 
 // Player count / viewport setup. Same as the original, plus: in co-op, drop the "multiplayer map" flag
 // right after the reset check in 805FE7FC (it was only needed to keep 2 players), so the rest of the load
@@ -2359,7 +2380,6 @@ RECOMP_PATCH void func_global_asm_80712830(Actor *arg0, s32 exit) {
     s32 sp20;
     s32 sp1C;
 
-    recomp_printf("[coop] 80712830 death/exit actor=%p exit=%d cc_idx=%d flags=%x\n", (void *)arg0, (int)exit, (int)cc_player_index, (unsigned)D_global_asm_807FBB64);
     func_global_asm_80709464(exit);
     if (coop_active_here()) {
         func_global_asm_80709464(0);
@@ -2418,12 +2438,46 @@ RECOMP_PATCH void func_global_asm_80627948(Actor *arg0, u8 arg1, u8 arg2, u8 arg
     }
 }
 
+extern s16 D_global_asm_807476F4;
+extern u16 D_global_asm_807F5CF4;
+extern Actor *D_global_asm_807F5CE8;
+extern Actor *D_global_asm_807F5D10;
+static Actor *coop_cannon_cam_saved = NULL; // P1's camera actor while the cutscene is bound to P2's camera
 static int coop_barrel_busy = 0;              // P2 is choosing in the tag barrel: the scene (camera 0) is shown on P2's screen only
 static Actor *coop_barrel_user_actor = NULL; // the Kong who entered the barrel
 static int coop_barrel_chooser = -1;          // player index (0/1) choosing in the tag barrel, -1 if none (refreshed every frame by the barrel)
 static u32 coop_barrel_stamp = 0;             // object_timer of the last barrel update with a selection running
 static Actor *coop_barrel_spot = NULL;        // spotlight actor of the selection scene
 static int coop_barrel_sel = 0;               // a tag barrel selection is running (P1 or P2): no "glue P2 to P1" during it
+// Japes cannon (control states 0x42 entering / 0x45 flying): index of the Kong using a cannon, -1 if none
+static int coop_cannon_user(void) {
+    int k;
+    if (!coop_active_here()) return -1;
+    for (k = 0; k < 2; k++) {
+        Actor *p = character_change_array[k].playerPointer;
+        if (character_change_array[k].does_player_exist && p != NULL && (p->control_state == 0x42 || p->control_state == 0x45)) return k;
+    }
+    return -1;
+}
+// Japes cannon cutscene: returns 1 for the camera actor of the Kong who is NOT in the cannon (it must keep its normal
+// follow mode instead of running the cutscene script, see func_global_asm_8061DBD4 in patches_interpolation.c).
+int coop_cannon_other_cam(Actor *cam) {
+    int u;
+    Actor *owner;
+    static int pre_frames;
+    if (is_cutscene_active != 1 || current_map != MAP_JAPES || D_global_asm_807476F4 != 22) { pre_frames = 0; return 0; }
+    u = coop_cannon_user();
+    if (u < 0) {
+        // the first frame(s) of the cutscene: the Kong in the cannon is not known yet -> neither camera runs the cutscene
+        // (no one-frame flash of the cutscene view on the wrong screen), at most 4 calls per camera so that nothing can hang
+        if (pre_frames < 8) { pre_frames++; return 1; }
+        return 0;
+    }
+    pre_frames = 0;
+    owner = character_change_array[u].playerPointer;
+    if (owner == NULL || owner->PaaD == NULL) return 0;
+    return cam != ((PlayerAdditionalActorData *)owner->PaaD)->unk104;
+}
 static int coop_death_cam(void) {
     int k;
     if (!coop_active_here() || is_cutscene_active == 0) return 0;
@@ -2438,6 +2492,108 @@ static int coop_barrel_chooser_now(void) {
     if (!coop_active_here() || coop_barrel_chooser < 0) return -1;
     if ((u32)(object_timer - coop_barrel_stamp) > 3) return -1; // barrel not updating any more (map change...)
     return coop_barrel_chooser;
+}
+
+// Player whose viewport is drawn on the WHOLE screen (the other one is not drawn), or -1 for the normal split screen.
+// - tag barrel selection: the player who is choosing;
+// - scripted cutscenes (speech bubbles of Scoff/Troff, Squawks...): both Kongs see the same scene, so only one view is shown.
+//   Not for the Japes cannon (one Kong flies while the other keeps playing) nor the death camera.
+#define COOP_P_FULLSCREEN_CS 1
+static int coop_fullscreen_now(void) {
+    static u32 fs_stamp = 0;
+    static int fs_player = -1;
+    static int fs_feed = 0;
+    int ch = coop_barrel_chooser_now();
+    if (ch >= 0) return ch;
+#if COOP_P_FULLSCREEN_CS
+    if (coop_active_here() && !coop_death_cam() && coop_cannon_user() < 0
+        && !(current_map == MAP_JAPES && D_global_asm_807476F4 == 22)) {
+        Actor *c0 = character_change_array[0].playerPointer;
+        Actor *c1 = character_change_array[1].playerPointer;
+        int want = -1;
+        if (is_cutscene_active == 1) {
+            want = (c1 != NULL && D_global_asm_807F5CE8 == c1) ? 1 : 0;
+        } else if (c0 != NULL && c0->control_state == 0x6C) {
+            want = 0; // a Kong feeding Troff/Scoff (state 0x6C): the cutscene flag drops to 0 between the camera shots
+        } else if (c1 != NULL && c1->control_state == 0x6C) {
+            want = 1;
+        }
+        if (want >= 0) {
+            fs_stamp = (u32)object_timer;
+            fs_player = want;
+            fs_feed = (is_cutscene_active != 1); // kept because of the feeding state, not a cutscene
+            return want;
+        }
+        // Hold after the scene: short between two camera shots; after the feeding of Troff/Scoff the hippo's animation and the
+        // camera shot on it go on for a few seconds (controls still locked), so hold longer unless a player touches a control.
+        if (fs_player >= 0) {
+            u32 age = (u32)((u32)object_timer - fs_stamp);
+            u32 maxage = fs_feed ? 300 : 20;
+            if (fs_feed && age >= 30) {
+                int k;
+                for (k = 0; k < 2; k++) {
+                    if (D_global_asm_807ECD10[k].button != 0 || D_global_asm_807ECD10[k].stick_x > 30 || D_global_asm_807ECD10[k].stick_x < -30
+                        || D_global_asm_807ECD10[k].stick_y > 30 || D_global_asm_807ECD10[k].stick_y < -30) { maxage = 0; }
+                }
+            }
+            if (age <= maxage) return fs_player;
+        }
+    }
+#endif
+    fs_player = -1;
+    return -1;
+}
+
+// Troff 'n' Scoff feeding: the hippo script (806BE09C) asks for its camera effects on the camera actor taken from the player data,
+// and in co-op that was P2's camera (log: cam idx 1) instead of the feeding Kong's: P1 (shown full screen) never saw the
+// effect. Remap the effect to the camera of the Kong that is the target of the first effect, and keep it for the following
+// ones (target = the hippo).
+Actor *coop_fx_cam(Actor *cam, Actor *target) {
+    static Actor *owner_cam = NULL;
+    static u32 stamp = 0;
+    Actor *kc[2] = {NULL, NULL};
+    int k;
+    if (!coop_active_here() || current_map != MAP_TROFF_N_SCOFF || cam == NULL) return cam;
+    for (k = 0; k < 2; k++) {
+        Actor *pa = character_change_array[k].playerPointer;
+        kc[k] = (pa != NULL && pa->PaaD != NULL) ? ((PlayerAdditionalActorData *)pa->PaaD)->unk104 : NULL;
+    }
+    // the Kong that is feeding (state 0x6C) owns the effect
+    for (k = 0; k < 2; k++) {
+        Actor *pa = character_change_array[k].playerPointer;
+        if (pa != NULL && pa->control_state == 0x6C && kc[k] != NULL && (target == pa || target == gPlayerPointer)) {
+            owner_cam = kc[k];
+            stamp = (u32)object_timer;
+            return kc[k];
+        }
+    }
+    for (k = 0; k < 2; k++) {
+        if (target != NULL && target == character_change_array[k].playerPointer && kc[k] != NULL && target->control_state == 0x6C) {
+            owner_cam = kc[k];
+            stamp = (u32)object_timer;
+            return kc[k];
+        }
+    }
+    if ((cam == kc[0] || cam == kc[1]) && owner_cam != NULL && (u32)((u32)object_timer - stamp) < 900) return owner_cam;
+    return cam;
+}
+
+int coop_fullscreen_query(void) { return coop_fullscreen_now(); }
+// Player (0/1) whose Kong is in the Troff 'n' Scoff feeding state (0x6C) and is the one shown full screen, else -1
+int coop_feeder_query(void) {
+    int fs = coop_fullscreen_now();
+    Actor *a;
+    if (fs < 0 || fs > 1) return -1;
+    a = character_change_array[fs].playerPointer;
+    return (a != NULL && a->control_state == 0x6C) ? fs : -1;
+}
+
+// Camera update (8061DBD4): 1 when camera ci must NOT run the cutscene script because the other Kong's view is the one shown full screen.
+int coop_cs_other_cam(int ci) {
+    int fs;
+    if (!coop_active_here() || is_cutscene_active != 1) return 0;
+    fs = coop_fullscreen_now();
+    return (fs >= 0 && fs != ci) ? 1 : 0;
 }
 
 extern s16 func_global_asm_80665DE0(f32, f32, f32, f32);
@@ -2526,11 +2682,6 @@ RECOMP_PATCH f32 func_global_asm_80689DD4(f32 x, f32 y, f32 z) {
         static int sdb = 0, scalls = 0;
         if (sdb < 40 && ((++scalls) % 300) == 0) {
             sdb++;
-            recomp_printf("[coop] spawn-dist at (%d,%d,%d): closest=%d | P1 eye=(%d,%d,%d) cam=(%d,%d,%d) | P2 eye=(%d,%d,%d) cam=(%d,%d,%d)\n", (int)x, (int)y, (int)z, (int)(closest / 1000.0f),
-                (int)character_change_array[0].look_at_eye_x, (int)character_change_array[0].look_at_eye_y, (int)character_change_array[0].look_at_eye_z,
-                (int)character_change_array[0].unk21C, (int)character_change_array[0].unk220, (int)character_change_array[0].unk224,
-                (int)character_change_array[1].look_at_eye_x, (int)character_change_array[1].look_at_eye_y, (int)character_change_array[1].look_at_eye_z,
-                (int)character_change_array[1].unk21C, (int)character_change_array[1].unk220, (int)character_change_array[1].unk224);
         }
     }
     return closest;
@@ -2551,17 +2702,6 @@ static Actor *coop_nearest_kong(Actor *a) {
         d = dx * dx + dy * dy + dz * dz;
         if (p->control_state == 0x36 || p->control_state == 0x39) d += 1.0e12f; // dying: prefer the other one
         if (best == NULL || d < bestd) { best = p; bestd = d; }
-        {
-            static int ndbg = 0;
-            static f32 dd[2];
-            dd[k] = d;
-            static int ncalls = 0;
-            if (k == 1 && ndbg < 60 && ((++ncalls) % 150) == 0) {
-                ndbg++;
-                recomp_printf("[coop] target actor id=%d pos=(%d,%d,%d) d1=%d d2=%d -> %s\n", (int)a->unk58, (int)a->x_position, (int)a->y_position, (int)a->z_position,
-                    (int)(dd[0] / 1000.0f), (int)(dd[1] / 1000.0f), (best == character_change_array[0].playerPointer) ? "P1" : "P2");
-            }
-        }
     }
     return best;
 }
@@ -2582,30 +2722,15 @@ extern void func_global_asm_80669A6C(Actor *);
 extern u8 D_global_asm_807F94B4;
 
 RECOMP_PATCH void func_global_asm_80678BBC(Actor *arg0) {
-    static int coop_dbg = 0;
-    int dbg = 0;
     func_global_asm_806663F8();
-    if (coop_active_here() && coop_dbg < 4 && (arg0->interactable & 1)) {
-        coop_dbg++; dbg = 1;
-        recomp_printf("[coop] upd player actor %p idx=%d\n", (void *)arg0, (int)((PlayerAdditionalActorData *)arg0->PaaD)->unk1A4);
-    }
     if (coop_active_here() && (arg0->interactable & 1)) {
-        static u8 coop_last_cs[2] = {0xFF, 0xFF};
-        static u8 coop_last_act[2] = {0xFF, 0xFF};
         int pi = ((PlayerAdditionalActorData *)arg0->PaaD)->unk1A4 & 1;
-        u8 act = (u8)character_change_array[pi].action_initiated;
-        if (coop_last_cs[pi] != arg0->control_state || coop_last_act[pi] != act) {
-            recomp_printf("[coop] state p=%d cs=%d->%d act=%d->%d unk6A=%x\n", pi, (int)coop_last_cs[pi], (int)arg0->control_state, (int)coop_last_act[pi], (int)act, (unsigned)arg0->unk6A);
-            coop_last_cs[pi] = arg0->control_state;
-            coop_last_act[pi] = act;
-        }
         {
             // In single-player the death state (0x36) never completes on its own for a non-multiplayer game; in co-op
             // switch to the "fade out + reload" state (0x39) after the death animation so the level restarts for both Kongs.
             static u16 coop_death_t[2] = {0, 0};
             if (arg0->control_state == 0x36) {
                 if (++coop_death_t[pi] >= 90) {
-                    recomp_printf("[coop] death p=%d -> 0x39 (reload)\n", pi);
                     arg0->control_state = 0x39;
                     arg0->control_state_progress = 1;
                     ((PlayerAdditionalActorData *)arg0->PaaD)->unk11C = 20;
@@ -2651,14 +2776,6 @@ RECOMP_PATCH void func_global_asm_80678BBC(Actor *arg0) {
     }
 }
 
-static int coop_mtx_el(void *mtx, int k) { // fixed-point N64 Mtx element k (0..15) * 1000
-    u32 *w = (u32 *)mtx;
-    u32 wi = w[k >> 1], wf = w[8 + (k >> 1)];
-    s16 ip = (s16)((k & 1) ? (wi & 0xFFFF) : (wi >> 16));
-    u16 fp = (u16)((k & 1) ? (wf & 0xFFFF) : (wf >> 16));
-    return (int)(((f32)ip + (f32)fp / 65536.0f) * 1000.0f);
-}
-
 // ---- Story co-op: camera-facing sprites (melon slices, bananas...) for P2's viewport ----
 // A world sprite's model matrix (sprite->unk128[0]) is built once per frame so that the sprite faces PLAYER 0's camera
 // (rotation R0 such that R0 * V0 is a pure scale). Drawn in P2's viewport it is seen edge-on. For P2 a corrected matrix
@@ -2675,7 +2792,18 @@ static f32 coop_mtx_f(void *mtx, int k) {
 static u32 coop_sprite_buf[1024][16] __attribute__((aligned(16)));
 static u32 coop_sprite_cnt = 0;
 extern u8 D_global_asm_807444FC;
+// Slot of sprite->unk128[] to use for the viewport being drawn. The original update (80715270) builds one billboard matrix per
+// player i < AB4 from character_change_array[i]'s render eye, but the draw only indexes by cc_player_index when
+// cc_number_of_players > 1 (it is 1 in co-op), so P2 used P1's matrix.
+extern u8 D_global_asm_80750AB4;
+int coop_sprite_slot(void) {
+    if (cc_number_of_players > 1) return cc_player_index;
+    if (cc_player_index == 1 && coop_active_here() && D_global_asm_80750AB4 >= 2
+        && character_change_array != NULL && character_change_array[1].does_player_exist) return 1;
+    return 0;
+}
 void *coop_sprite_mtx(void *m0, int raw_alignment, void *vtx) {
+    if (coop_sprite_slot() == 1) return m0; // the matrix already faces P2's camera (built in the update from its own eye)
     f32 R0[3][3], V0[3][3], V1[3][3], P[3][3], T[3][3], R1[3][3], out[4][4];
     f32 n1, d = 0.0f;
     int r, c, k;
@@ -2749,26 +2877,6 @@ extern f32 func_global_asm_80612D10(f32);
 RECOMP_PATCH Gfx *func_global_asm_8062C29C(Gfx *dl, f32 arg1, f32 arg2, f32 arg3, f32 arg4, f32 arg5, f32 arg6, f32 arg7, f32 arg8, f32 arg9) {
     s32 pad[25];
     Gfx *temp_s3;
-    static int coop_rdbg = 0;
-
-    if (coop_active_here()) {
-        coop_rdbg++;
-        if (coop_rdbg < 12 || (coop_rdbg % 240) < 2) {
-            recomp_printf("[coop] render vp idx=%d AB4=%d eye=(%d,%d,%d) at=(%d,%d,%d) rect=(%d,%d,%d,%d) exist=%d fov=%d asp=%d far=%d\n",
-                (int)cc_player_index, (int)D_global_asm_80750AB4,
-                (int)arg1, (int)arg2, (int)arg3, (int)arg4, (int)arg5, (int)arg6,
-                (int)character_change_array[cc_player_index].unk270[0], (int)character_change_array[cc_player_index].unk270[1],
-                (int)character_change_array[cc_player_index].unk270[2], (int)character_change_array[cc_player_index].unk270[3],
-                (int)character_change_array[cc_player_index].does_player_exist,
-                (int)arg7, (int)(arg8 * 100.0f), (int)arg9);
-            {
-                s16 *vpp = (s16 *)&character_change_array[cc_player_index].unk250[D_global_asm_807444FC];
-                recomp_printf("[coop]   vp idx=%d viewport=(%d,%d,%d,%d | %d,%d,%d,%d) persp=%d dbg=%d\n", (int)cc_player_index,
-                    (int)vpp[0], (int)vpp[1], (int)vpp[2], (int)vpp[3], (int)vpp[4], (int)vpp[5], (int)vpp[6], (int)vpp[7],
-                    (int)character_change_array[cc_player_index].unk188, (int)recomp_get_coop_debug());
-            }
-        }
-    }
     temp_s3 = (Gfx *)&character_change_array[cc_player_index].unk1F0[D_global_asm_807444FC];
     D_global_asm_807F5E64 = 0;
     D_global_asm_807F5FB4 = arg7;
@@ -2780,15 +2888,8 @@ RECOMP_PATCH Gfx *func_global_asm_8062C29C(Gfx *dl, f32 arg1, f32 arg2, f32 arg3
     func_global_asm_8062DB70(arg1, arg2, arg3, arg4, arg5, arg6);
     func_global_asm_8062A944(D_global_asm_807F5FB4, D_global_asm_807F5FB0, D_global_asm_807F5FA8);
     func_global_asm_8062AC68(&character_change_array[cc_player_index].unk8[D_global_asm_807444FC]);
-    if (coop_active_here() && (coop_rdbg < 12 || (coop_rdbg % 240) < 2)) {
-        void *pm = &character_change_array[cc_player_index].unk88[D_global_asm_807444FC];
-        void *vm = &character_change_array[cc_player_index].unk8[D_global_asm_807444FC];
-        recomp_printf("[coop]   mtx idx=%d proj[0]=%d [5]=%d [10]=%d [11]=%d [14]=%d | view[0]=%d [5]=%d [10]=%d [12]=%d [13]=%d [14]=%d\n", (int)cc_player_index,
-            coop_mtx_el(pm, 0), coop_mtx_el(pm, 5), coop_mtx_el(pm, 10), coop_mtx_el(pm, 11), coop_mtx_el(pm, 14),
-            coop_mtx_el(vm, 0), coop_mtx_el(vm, 5), coop_mtx_el(vm, 10), coop_mtx_el(vm, 12), coop_mtx_el(vm, 13), coop_mtx_el(vm, 14));
-    }
     func_global_asm_8062AD28(arg1, arg2, arg3, &D_global_asm_807F5E68, (f32 *)D_global_asm_807F5E20);
-    func_global_asm_8062D620(D_global_asm_807F5DE4, D_global_asm_807F5E60, D_global_asm_807F5FF0, arg1, arg2, arg3, 0, !D_global_asm_807F5FEC, (D_global_asm_80750AB4 >= 2) && !(coop_active_here() && (recomp_get_coop_debug() & 8)));
+    func_global_asm_8062D620(D_global_asm_807F5DE4, D_global_asm_807F5E60, D_global_asm_807F5FF0, arg1, arg2, arg3, 0, !D_global_asm_807F5FEC, (D_global_asm_80750AB4 >= 2));
     gSPSegment(dl++, 0x06, osVirtualToPhysical(D_global_asm_807F5DE8));
     gSPSegment(dl++, 0x07, osVirtualToPhysical(D_global_asm_807F5DEC));
     dl = func_global_asm_80722294(dl, character_change_array[cc_player_index].playerPointer, cc_player_index);
@@ -2811,25 +2912,96 @@ RECOMP_PATCH Gfx *func_global_asm_8062C29C(Gfx *dl, f32 arg1, f32 arg2, f32 arg3
     return dl;
 }
 
-// ---- Story co-op debug: trace the per-actor update of player Kongs (copy of the original + prints) ----
+// ---- Story co-op: actor update loop (target = closest Kong for enemies) ----
 extern void (*D_global_asm_8074C0A0[])();
 extern u16 D_global_asm_807FBB3C;
 extern u8 D_global_asm_807FBE08;
 extern void func_global_asm_80678CC8(Actor *);
 extern void func_global_asm_80678BBC(Actor *);
 
+extern u8 is_autowalking;
+extern f32 D_global_asm_80753218[];
+extern f32 D_global_asm_807531FC[];
 #define COOP_P_ENEMY 1 // enemies/other actors target the closest Kong
 static int coop_tgt_swapped = 0;
 RECOMP_PATCH void func_global_asm_8067889C(u8 arg0) {
-    static int coop_adbg = 0;
-    if (arg0 == 1 && coop_trace_on && coop_trace_lines < 3000) { coop_trace_lines++; recomp_printf("[coop] ---- frame ----\n"); }
-    static int coop_hb = 0;
+    // Co-op: the autowalk sets the Kong's max walking speed (unk38) to the fast autowalk value and only the Kong
+    // that goes through a state change gets it reset. A Kong spawned/triggered during an autowalk (P2) kept running
+    // at that speed afterwards until it jumped/punched. Reset it once the autowalk is over.
+    if (arg0 == 1 && coop_active_here() && character_change_array != NULL && is_autowalking != 3) {
+        int pi;
+        for (pi = 0; pi < 2; pi++) {
+            Actor *pa = character_change_array[pi].playerPointer;
+            int kong = current_character_index[pi];
+            if (pa != NULL && pa->PaaD != NULL && kong >= 0 && kong <= 4) {
+                PlayerAdditionalActorData *pp = (PlayerAdditionalActorData *)pa->PaaD;
+                if (pp->unk8C == 0 && !(pp->unk1F0 & 0x20) && pp->unk38 == D_global_asm_80753218[kong] && D_global_asm_80753218[kong] != D_global_asm_807531FC[kong]) {
+                    pp->unk38 = D_global_asm_807531FC[kong];
+                }
+            }
+        }
+    }
     // Entrance cutscene / autowalk: P2 has no autowalk and would stand in the door (exit loading zone) while
     // the user can walk him out of the level. Keep P2 glued next to P1 until P1 regains control.
     if (arg0 == 1 && coop_active_here() && character_change_array != NULL) {
         Actor *c0 = character_change_array[0].playerPointer;
+        if (coop_cannon_cam_saved != NULL && is_cutscene_active == 0) { D_global_asm_807F5D10 = coop_cannon_cam_saved; coop_cannon_cam_saved = NULL; }
         Actor *c1 = character_change_array[1].playerPointer;
-        if (!coop_trace_on && c0 && c1 && is_cutscene_active == 0 && c0->control_state == 13) { coop_trace_on = 1; recomp_printf("[coop] TRACE ON\n"); }
+        if (c1) {   // Japes cannon, P2 as the user. The launch (upward speed) is not given to P2 by the game, and P2 is dropped
+            // out of the flight state (0x45 -> 0x1E) about every 20 frames while P1 keeps it until it lands. Log of P1 (works):
+            // first frame of state 0x45 has y_velocity = 812, speed 206 (-1 per frame), flag unk64 = 0x80.
+            static int cn_prev1 = 0;
+            static f32 cn_spd = 0.0f;
+            static int cn_anim = -1;
+            static int cn_latch = 0; // frames left of the forced flight of P2 (0 = not flying)
+            int st1 = c1->control_state;
+            if (cn_latch > 0) {
+                cn_latch--;
+                if (cn_spd > 0.0f) cn_spd -= 1.0f;
+                if (c1->control_state != 0x45) {
+                    c1->control_state = 0x45;
+                    c1->control_state_progress = 0;
+                    c1->unk64 |= 0x80;
+                    if ((int)c1->animation_state->unk64 != cn_anim) playAnimation(c1, 0x22); // the spin keeps playing if the kick did not change it
+                    st1 = 0x45;
+                }
+                if (c1->unkB8 < cn_spd) c1->unkB8 = cn_spd;
+                if (c1->y_velocity < 0.0f && c1->distance_from_floor < 25.0f) cn_latch = 0; // landing: back to normal
+                // the cutscene is over and P2 is standing on the ground (vy is not always < 0 there): stop forcing the flight
+                if (is_cutscene_active == 0 && c1->distance_from_floor < 8.0f && c1->y_velocity <= 0.0f) cn_latch = 0;
+            }
+            // The game only lets P2 leave the flight state (landing) when P1 stands still (it stayed "spinning" on the ground while
+            // P1 was running). Landing is therefore done here: cutscene over + on the ground for 3 checks in a row -> idle.
+            {
+                static int cn_ground = 0;
+                if (is_cutscene_active == 0 && c1->control_state == 0x45 && c1->distance_from_floor < 8.0f && c1->y_velocity <= 0.0f) {
+                    if (++cn_ground >= 3) {
+                        cn_ground = 0;
+                        cn_latch = 0;
+                        c1->control_state = 0xC;
+                        c1->control_state_progress = 0;
+                        c1->unk64 &= ~0x80;
+                        c1->y_velocity = 0.0f;
+                        playAnimation(c1, 9);
+                        c1->x_rotation = 0;
+                        c1->z_rotation = 0;
+                        st1 = 0xC;
+                    }
+                } else {
+                    cn_ground = 0;
+                }
+            }
+            if (st1 == 0x45 && cn_prev1 != 0x45 && c1->y_velocity < 100.0f) {
+                c1->y_velocity = 812.0f;
+                c1->control_state_progress = 0;
+                c1->unk64 |= 0x80;
+                playAnimation(c1, 0x22);
+                cn_anim = (int)c1->animation_state->unk64;
+                cn_latch = 900;
+                cn_spd = c1->unkB8;
+            }
+            cn_prev1 = st1;
+        }
         if (c0 && c1 && coop_barrel_chooser_now() >= 0) {
             // tag barrel selection: the other Kong stays where it is (no teleport), it just cannot move
             int oi = (coop_barrel_chooser_now() == 1) ? 0 : 1;
@@ -2842,6 +3014,17 @@ RECOMP_PATCH void func_global_asm_8067889C(u8 arg0) {
             if (character_change_array[oi].new_controller_inputs != NULL) {
                 character_change_array[oi].new_controller_inputs->button = 0;
             }
+        } else if (c0 && c1 && (coop_cannon_user() >= 0 || (is_cutscene_active != 0 && current_map == MAP_JAPES && D_global_asm_807476F4 == 22))) {
+            // Japes cannon: no glue of P2 next to P1. The cutscene (camera actor D_global_asm_807F5D10, subject
+            // D_global_asm_807F5CE8) is bound to P2's own camera when P2 uses the cannon, so P1's screen is untouched.
+            if (is_cutscene_active != 0 && coop_cannon_user() == 1) {
+                Actor *cam1 = ((PlayerAdditionalActorData *)c1->PaaD)->unk104;
+                if (cam1 != NULL && D_global_asm_807F5D10 != cam1) {
+                    coop_cannon_cam_saved = D_global_asm_807F5D10;
+                    D_global_asm_807F5D10 = cam1;
+                }
+                if (D_global_asm_807F5CE8 == c0) D_global_asm_807F5CE8 = c1;
+            }
         } else if (c0 && c1 && (c0->control_state == 0x88 || is_cutscene_active != 0) && !coop_death_cam() && !coop_barrel_sel) {
             c1->x_position = c0->x_position + 25.0f;
             c1->y_position = c0->y_position;
@@ -2849,37 +3032,12 @@ RECOMP_PATCH void func_global_asm_8067889C(u8 arg0) {
             c1->y_rotation = c0->y_rotation;
         }
     }
-    if (arg0 == 1 && coop_active_here() && (++coop_hb % 10) == 0 && character_change_array != NULL) {
-        Actor *a0 = character_change_array[0].playerPointer;
-        Actor *a1 = character_change_array[1].playerPointer;
-        if (a0 && a1) {
-            recomp_printf("[coop] hb map=%d cs=%d P1(%d,%d,%d cs=%d) P2(%d,%d,%d cs=%d)\n", (int)current_map, (int)is_cutscene_active,
-                (int)a0->x_position, (int)a0->y_position, (int)a0->z_position, (int)a0->control_state,
-                (int)a1->x_position, (int)a1->y_position, (int)a1->z_position, (int)a1->control_state);
-            recomp_printf("[coop] hb2 active=%d connected=%d pad0(btn=%04x sx=%d sy=%d) pad1(btn=%04x sx=%d sy=%d) new0=%04x new1=%04x\n",
-                (int)D_global_asm_807ECDF8, (int)D_global_asm_807ECD09,
-                (int)D_global_asm_807ECD10[0].button, (int)D_global_asm_807ECD10[0].stick_x, (int)D_global_asm_807ECD10[0].stick_y,
-                (int)D_global_asm_807ECD10[1].button, (int)D_global_asm_807ECD10[1].stick_x, (int)D_global_asm_807ECD10[1].stick_y,
-                (int)newly_pressed_input[0], (int)newly_pressed_input[1]);
-            {
-                PlayerAdditionalActorData *pa0 = (PlayerAdditionalActorData *)a0->PaaD;
-                PlayerAdditionalActorData *pa1 = (PlayerAdditionalActorData *)a1->PaaD;
-                recomp_printf("[coop] hb3 cam0(cs=%d prog=%d) cam1(cs=%d prog=%d) autowalk? P1.state_prog=%d\n",
-                    pa0->unk104 ? (int)pa0->unk104->control_state : -1, pa0->unk104 ? (int)pa0->unk104->control_state_progress : -1,
-                    pa1->unk104 ? (int)pa1->unk104->control_state : -1, pa1->unk104 ? (int)pa1->unk104->control_state_progress : -1,
-                    (int)a0->control_state_progress);
-            }
-        }
-    }
     for (D_global_asm_807FBB3C = 0; D_global_asm_807FBB3C < D_global_asm_807FBB34; D_global_asm_807FBB3C++) {
-        int dbg;
         D_global_asm_807FBE08 = 0;
         gCurrentActorPointer = D_global_asm_807FB930[D_global_asm_807FBB3C].unk0;
         if (((arg0 == 1) && ((gCurrentActorPointer->object_properties_bitfield & 0x100000) == 0)) ||
             ((arg0 == 2) && ((gCurrentActorPointer->object_properties_bitfield & 0x100000) != 0))
         ) {
-            dbg = coop_active_here() && coop_adbg < 12 && ((gCurrentActorPointer->interactable & 1) || (gCurrentActorPointer->object_properties_bitfield & 0x100000));
-            if (coop_trace_on && coop_trace_lines < 3000) { coop_trace_lines++; recomp_printf("[coop] A pass=%d id=%d ptr=%p cs=%d prog=%d\n", (int)arg0, (int)gCurrentActorPointer->unk58, (void *)gCurrentActorPointer, (int)gCurrentActorPointer->control_state, (int)gCurrentActorPointer->control_state_progress); }
             coop_tgt_swapped = 0;
             if (coop_active_here() && !(gCurrentActorPointer->interactable & 1) && !(gCurrentActorPointer->object_properties_bitfield & 0x100000) && COOP_P_ENEMY) {
                 Actor *near_ = coop_nearest_kong(gCurrentActorPointer);
@@ -2889,21 +3047,15 @@ RECOMP_PATCH void func_global_asm_8067889C(u8 arg0) {
                 }
             }
             func_global_asm_80678BBC(gCurrentActorPointer);
-            if (coop_trace_on && coop_trace_lines < 3000) recomp_printf("[coop]   updated\n");
-            if (dbg) { coop_adbg++; recomp_printf("[coop] behav start actor=%p id=%d\n", (void *)gCurrentActorPointer, (int)gCurrentActorPointer->unk58); }
-            if (dbg && gCurrentActorPointer->unk58 == 188) {
-                CameraPaad *cp = (CameraPaad *)gCurrentActorPointer->AAD_as_array[0];
-                recomp_printf("[coop] camera paad=%p unkFB=%d follow=%p P1=%p cs=%d\n", (void *)cp, cp ? (int)cp->unkFB : -1, cp ? (void *)cp->unk0 : NULL, (void *)gPlayerPointer, (int)is_cutscene_active);
-            }
             D_global_asm_8074C0A0[gCurrentActorPointer->unk58]();
-            if (dbg) recomp_printf("[coop] behav done\n");
-            if (coop_trace_on && coop_trace_lines < 3000) recomp_printf("[coop]   behaved\n");
+            
+            
             func_global_asm_80678CC8(gCurrentActorPointer);
             if (coop_tgt_swapped) {
                 gPlayerPointer = character_change_array[0].playerPointer; // back to P1
                 coop_tgt_swapped = 0;
             }
-            if (dbg) recomp_printf("[coop] post done\n");
+            
         }
     }
 }
@@ -2922,7 +3074,8 @@ extern u8 D_global_asm_807F5FED;
 // therefore point segment 2 to a copy of the frame matrix header whose projection / look-at are the player's own.
 static u32 coop_seg2[2][2][0x240 / 4] __attribute__((aligned(16)));
 static void *coop_frame_hdr = NULL; // frame header (segment 2) of the current frame, used by the P2 HUD
-static u32 coop_hud_seg2[2][0x240 / 4] __attribute__((aligned(16)));
+static u32 coop_hud_seg2[2][2][0x240 / 4] __attribute__((aligned(16))); // [player][frame]
+#define COOP_HP_SCALE 0.60f // size of the health bar (melons) in each split-screen half (1.0 = original)
 
 RECOMP_PATCH Gfx *func_global_asm_8062BF24(Gfx *dl, s32 arg1) {
     u8 temp_s4;
@@ -2939,41 +3092,24 @@ RECOMP_PATCH Gfx *func_global_asm_8062BF24(Gfx *dl, s32 arg1) {
         gDPPipelineMode(dl++, G_PM_NPRIMITIVE);
     }
     for (ii = 0; ii < D_global_asm_80750AB4; ii++) {
-        int dbgv = coop_active_here() ? recomp_get_coop_debug() : 0;
         i = ii;
-        if (dbgv & 4) i = (D_global_asm_80750AB4 - 1) - ii; // draw order swapped
-        if (((dbgv & 1) && i == 0) || ((dbgv & 2) && i == 1)) continue; // skip a viewport
         if (coop_vp_saved && coop_active_here() && i < 2) {
             int k;
             for (k = 0; k < 4; k++) character_change_array[i].unk270[k] = coop_vp_rect[i][k];
             character_change_array[i].unk278_arr[0] = coop_vp_rect[i][2] - coop_vp_rect[i][0];
             character_change_array[i].unk278_arr[1] = coop_vp_rect[i][3] - coop_vp_rect[i][1];
             character_change_array[i].unk280 = coop_vp_asp[i];
-            if ((dbgv & 32) && i == 1) { // test: P2 drawn in the TOP rectangle
-                int k;
-                for (k = 0; k < 4; k++) character_change_array[1].unk270[k] = coop_vp_rect[0][k];
-            }
-            if ((dbgv & 64) && i == 0) { // test: P1 drawn in the BOTTOM rectangle
-                int k;
-                for (k = 0; k < 4; k++) character_change_array[0].unk270[k] = coop_vp_rect[1][k];
-            }
-            if ((dbgv & 16) && i == 0) { // test: P1 over the whole screen
-                character_change_array[0].unk270[3] = 240;
-                character_change_array[0].unk278_arr[1] = 240;
-                character_change_array[0].unk280 = 320.0f / 240.0f;
-            }
         }
-        if (coop_active_here() && i < 2 && coop_barrel_chooser_now() >= 0) {
-            // tag barrel selection: the scene is the camera of the Kong who is choosing (its camera is put in the
+        if (coop_active_here() && i < 2 && coop_fullscreen_now() >= 0) {
+            // tag barrel selection / cutscene: the scene is the camera of the Kong who is choosing (its camera is put in the
             // "barrel" mode); only that viewport is drawn, on the whole screen like in 1-player
-            if (i != coop_barrel_chooser_now()) continue;
+            if (i != coop_fullscreen_now()) continue;
             character_change_array[i].unk270[0] = 0;
             character_change_array[i].unk270[1] = 0;
             character_change_array[i].unk270[2] = 320;
             character_change_array[i].unk270[3] = 240;
             character_change_array[i].unk278_arr[0] = 320;
             character_change_array[i].unk278_arr[1] = 240;
-            // coop_debug bit 128 / 256: aspect experiments for the full-screen scene (16:9 / 16:9 on the 3D only)
             character_change_array[i].unk280 = (320.0f / 240.0f);
         }
         if (character_change_array[i].does_player_exist) {
@@ -2984,13 +3120,35 @@ RECOMP_PATCH Gfx *func_global_asm_8062BF24(Gfx *dl, s32 arg1) {
                 gSPSegment(dl++, 0x02, osVirtualToPhysical(coop_seg2_buf));
             }
             int cs_ = (coop_active_here() && i < 2 && coop_death_cam()) ? 0 : i;
+            f32 cam_e[3], cam_a[3];
+            cam_e[0] = character_change_array[cs_].unk21C; cam_e[1] = character_change_array[cs_].unk220; cam_e[2] = character_change_array[cs_].unk224;
+            cam_a[0] = character_change_array[cs_].unk234; cam_a[1] = character_change_array[cs_].unk238; cam_a[2] = character_change_array[cs_].unk23C;
+            if (coop_active_here() && i < 2 && character_change_array[i].playerPointer != NULL) {
+                // Japes cannon: the Kong who is not in the cannon keeps playing; its viewport uses the camera it had just before the
+                // cutscene, translated with the Kong (same view angle), whatever the cutscene does to the engine camera.
+                static f32 snap_e[2][3], snap_a[2][3], snap_p[2][3];
+                static u8 snap_ok[2];
+                Actor *pl = character_change_array[i].playerPointer;
+                int cannon_cs = is_cutscene_active == 1 && current_map == MAP_JAPES && D_global_asm_807476F4 == 22 && coop_cannon_user() >= 0;
+                if (cannon_cs && i != coop_cannon_user() && snap_ok[i]) {
+                    int k;
+                    f32 d[3];
+                    d[0] = pl->x_position - snap_p[i][0]; d[1] = pl->y_position - snap_p[i][1]; d[2] = pl->z_position - snap_p[i][2];
+                    for (k = 0; k < 3; k++) { cam_e[k] = snap_e[i][k] + d[k]; cam_a[k] = snap_a[i][k] + d[k]; }
+                } else if (is_cutscene_active == 0) {
+                    snap_e[i][0] = cam_e[0]; snap_e[i][1] = cam_e[1]; snap_e[i][2] = cam_e[2];
+                    snap_a[i][0] = cam_a[0]; snap_a[i][1] = cam_a[1]; snap_a[i][2] = cam_a[2];
+                    snap_p[i][0] = pl->x_position; snap_p[i][1] = pl->y_position; snap_p[i][2] = pl->z_position;
+                    snap_ok[i] = 1;
+                }
+            }
             dl = func_global_asm_8062C29C(dl,
-                character_change_array[cs_].unk21C,
-                character_change_array[cs_].unk220,
-                character_change_array[cs_].unk224,
-                character_change_array[cs_].unk234,
-                character_change_array[cs_].unk238,
-                character_change_array[cs_].unk23C,
+                cam_e[0],
+                cam_e[1],
+                cam_e[2],
+                cam_a[0],
+                cam_a[1],
+                cam_a[2],
                 character_change_array[cs_].unk28C,
                 character_change_array[i].unk280 * func_global_asm_8062A850(),
                 character_change_array[cs_].far
@@ -3049,8 +3207,8 @@ RECOMP_PATCH void func_global_asm_80722280(void) {
         }
         // tag barrel scene drawn full screen: the projection of the next frame (built from unk280 by the camera update)
         // must use the full-screen aspect, not the split-screen one (which made everything too thin)
-        if (coop_barrel_chooser_now() >= 0) {
-            int ch_ = coop_barrel_chooser_now();
+        if (coop_fullscreen_now() >= 0) {
+            int ch_ = coop_fullscreen_now();
             character_change_array[ch_].unk280 = (320.0f / 240.0f);
         }
     }
@@ -3114,7 +3272,6 @@ RECOMP_PATCH CoopQ36 *func_global_asm_806F53EC(CoopQ37 *arg0) {
         coop_melon_pending = 1;
     }
     if (recomp_get_coop_enabled() && coop_map_allowed()) {
-        recomp_printf("[coop] queue pickup item=0x%x owner=%d cc_idx=%d\n", (int)arg0->unk2, (int)coop_pickup_player, (int)cc_player_index);
     }
     return temp_v0;
 }
@@ -3131,7 +3288,6 @@ RECOMP_PATCH void func_global_asm_806F5378(void) {
             coop_pickup_player = current->unk1B == 1 ? 1 : 0;
         }
         if (recomp_get_coop_enabled() && coop_map_allowed()) {
-            recomp_printf("[coop] apply queued item=0x%x owner=%d\n", (int)current->unk2, (int)coop_pickup_player);
         }
         func_global_asm_806F54E0(0, current->unk2, current->unk1A);
         coop_pickup_player = 0;
@@ -3159,7 +3315,7 @@ RECOMP_PATCH Gfx *func_global_asm_80709344(Gfx *dl) {
     }
 #endif
     for (i = 0; i < n; i++) {
-        if (coop_active_here() && coop_barrel_chooser_now() >= 0) continue; // tag barrel scene is full screen: no HUD
+        if (coop_active_here() && coop_fullscreen_now() >= 0) continue; // full-screen scene (tag barrel, cutscene): no HUD
         if (character_change_array[i].does_player_exist) {
             if (!(character_change_array[i].unk2DC.unk6 & 0x20)
             && (((character_change_array[i].unk2DC.unk8
@@ -3167,17 +3323,23 @@ RECOMP_PATCH Gfx *func_global_asm_80709344(Gfx *dl) {
                 && (D_global_asm_80744504 == 0))
                 || (character_change_array[i].unk2DC.unk6 & 0x10))) {
 #if COOP_P_HUD
-                if (i == 1 && coop_active_here() && coop_frame_hdr != NULL) {
-                    u32 *buf = coop_hud_seg2[D_global_asm_807444FC & 1];
+                if (coop_active_here() && coop_frame_hdr != NULL) {
+                    u32 *buf = coop_hud_seg2[i][D_global_asm_807444FC & 1];
                     u32 *src = (u32 *)coop_frame_hdr;
+                    f32 hs = COOP_HP_SCALE;
                     int k;
                     for (k = 0; k < 0x240 / 4; k++) buf[k] = src[k];
-                    // ortho 0..W*4-1 / H*4-1..0, shifted down by 120 px (480 units of 1/4 px)
-                    guOrtho((Mtx *)&buf[0xC0 / 4], 0.0f, 320.0f * 4.0f - 1.0f, 240.0f * 4.0f - 1.0f - 480.0f, -480.0f, -20000.0f, 20000.0f, 1.0f);
+                    // Full-screen HUD ortho (1/4 px units, 1280 x 960): the health bar is top-centre. Scale it around the
+                    // top-centre of the player's half: P1 = top half (y 0), P2 = bottom half (y shifted down by 120 px).
+                    if (i == 0) {
+                        guOrtho((Mtx *)&buf[0xC0 / 4], 640.0f - 640.0f / hs, 640.0f + 639.0f / hs, 959.0f / hs, 0.0f, -20000.0f, 20000.0f, 1.0f);
+                    } else {
+                        guOrtho((Mtx *)&buf[0xC0 / 4], 640.0f - 640.0f / hs, 640.0f + 639.0f / hs, 479.0f / hs, -480.0f / hs, -20000.0f, 20000.0f, 1.0f);
+                    }
                     gSPSegment(dl++, 0x02, osVirtualToPhysical(buf));
-                    // clip P2's HUD to P2's half of the screen (its slide animation would otherwise cross into P1's view)
+                    // clip the HUD to the player's half of the screen (its slide animation would otherwise cross into the other view)
                     gDPPipeSync(dl++);
-                    gDPSetScissorFrac(dl++, G_SC_NON_INTERLACE, coop_vp_rect[1][0] * 4.0f, coop_vp_rect[1][1] * 4.0f, coop_vp_rect[1][2] * 4.0f, coop_vp_rect[1][3] * 4.0f);
+                    gDPSetScissorFrac(dl++, G_SC_NON_INTERLACE, coop_vp_rect[i][0] * 4.0f, coop_vp_rect[i][1] * 4.0f, coop_vp_rect[i][2] * 4.0f, coop_vp_rect[i][3] * 4.0f);
                     dl = func_global_asm_80708DA4(dl, i, &character_change_array[i]);
                     gDPPipeSync(dl++);
                     gDPSetScissorFrac(dl++, G_SC_NON_INTERLACE, 0, 0, D_global_asm_80744490 * 4.0f, D_global_asm_80744494 * 4.0f);
@@ -3200,13 +3362,12 @@ RECOMP_PATCH void func_global_asm_8061EA78(void) {
     u8 count = coop_active_here() && D_global_asm_80750AC0 >= 2 ? 2 : cc_number_of_players;
     for (playerIndex = 0; playerIndex < count; playerIndex++) {
         if (character_change_array[playerIndex].does_player_exist) {
-            recomp_printf("[coop] cam init player %d\n", (int)playerIndex);
             func_global_asm_8061EB04(character_change_array[playerIndex].playerPointer, playerIndex);
         }
     }
 }
 
-// ---- Story co-op debug: log every map change request (copy of the original + print) ----
+// ---- Story co-op: map change request (copy of the original) ----
 extern s16 D_global_asm_8076AEF2;
 extern u8 D_global_asm_8076A0B2;
 extern u8 D_global_asm_807444F8;
@@ -3223,7 +3384,6 @@ extern void func_global_asm_805FF5A0(s32);
 extern void func_boss_8002920C(void);
 
 RECOMP_PATCH void func_global_asm_805FF378(s32 nextMap, s32 nextExit) {
-    recomp_printf("[coop] MAP CHANGE request map=%d exit=%d (current=%d cs=%d player_ctx=%d)\n", (int)nextMap, (int)nextExit, (int)current_map, (int)is_cutscene_active, (int)cc_player_index);
     func_global_asm_806F5378();
     if (is_cutscene_active == 6 || !func_global_asm_80712798()) {
         func_global_asm_80712F10(&nextMap, &nextExit);
@@ -3250,7 +3410,7 @@ RECOMP_PATCH void func_global_asm_805FF378(s32 nextMap, s32 nextExit) {
     }
 }
 
-// ---- Story co-op debug: traced copies of the "falling" (30) and "idle" (12) control state handlers ----
+// ---- Story co-op: copies of the "falling" (30) and "idle" (12) control state handlers ----
 extern s32 handleInputsForControlState(s32);
 extern void func_global_asm_806D3608(void);
 extern void setYAccelerationFrom80753578(void);
@@ -3258,35 +3418,25 @@ extern void func_global_asm_806CC8B8(void);
 extern void renderActor(Actor *, u8);
 extern s32 func_global_asm_806CDD24(Actor *, f32, f32, s32);
 
-#define COOP_TRACE(msg) do { if (coop_trace_on && coop_trace_lines < 3000) { coop_trace_lines++; recomp_printf("[coop]     " msg " (p=%d)\n", (int)cc_player_index); } } while (0)
-
 RECOMP_PATCH void func_global_asm_806D36CC(void) {
-    COOP_TRACE("fall: begin");
     switch (gCurrentActorPointer->control_state_progress) {
         case 0:
             handleInputsForControlState(0x20);
-            COOP_TRACE("fall0: inputs ok");
             func_global_asm_806D3608();
-            COOP_TRACE("fall0: 3608 ok");
             break;
         case 1:
             handleInputsForControlState(0x31);
-            COOP_TRACE("fall1: inputs ok");
             setYAccelerationFrom80753578();
-            COOP_TRACE("fall1: yaccel ok");
             break;
     }
     func_global_asm_806CC8B8();
-    COOP_TRACE("fall: CC8B8 ok");
     renderActor(gCurrentActorPointer, 0);
-    COOP_TRACE("fall: render ok");
 }
 
 RECOMP_PATCH void func_global_asm_806D2DC4(void) {
     s32 newControlState;
     s32 phi_a1;
 
-    COOP_TRACE("idle: begin");
     gCurrentActorPointer->unkEE = gCurrentActorPointer->y_rotation;
     gCurrentActorPointer->unk64 |= 0x200;
     phi_a1 = 0x13;
@@ -3295,18 +3445,14 @@ RECOMP_PATCH void func_global_asm_806D2DC4(void) {
         phi_a1 = 0x14;
     }
     if (object_timer > 1U && !handleInputsForControlState(phi_a1)) {
-        COOP_TRACE("idle: inputs ok");
         newControlState = func_global_asm_806CDD24(gCurrentActorPointer, gCurrentActorPointer->unkB8, extra_player_info_pointer->unk4, 1);
-        COOP_TRACE("idle: DD24 ok");
         if (newControlState != 0xC) {
             gCurrentActorPointer->control_state = (u8)newControlState & 0xFF;
             gCurrentActorPointer->control_state_progress = 0;
         }
     }
     func_global_asm_806CC8B8();
-    COOP_TRACE("idle: CC8B8 ok");
     renderActor(gCurrentActorPointer, 0);
-    COOP_TRACE("idle: render ok");
 }
 
 // ---- Story co-op: spawn placement of a player at the map exit (func_global_asm_806C90C4) ----
@@ -3415,7 +3561,6 @@ RECOMP_PATCH u8 setAction(s16 actionIndex, Actor *actor, u8 playerIndex) {
         }
 #if COOP_P_SWIRL
         if (coop_active_here() && playerIndex == 0 && actionIndex >= 0x40) {
-            recomp_printf("[coop] setAction p0 act=%d actor=%p\n", (int)actionIndex, (void *)actor);
         }
         if ((actionIndex == 90 || actionIndex == 89) && playerIndex == 0 && coop_active_here()
             && character_change_array[1].does_player_exist) {
@@ -3432,7 +3577,6 @@ RECOMP_PATCH u8 setAction(s16 actionIndex, Actor *actor, u8 playerIndex) {
                 character_change_array[1].unk2AC = D_global_asm_807FD6F0[1];
                 character_change_array[1].unk2B0 = D_global_asm_807FD6F0[2];
             }
-            recomp_printf("[coop] swirl: action %d mirrored to P2 actor=%p target=(%d,%d,%d)\n", (int)actionIndex, (void *)actor, (int)p1->unk22C, (int)p1->unk230, (int)p1->unk234);
         }
 #endif
         return TRUE;
@@ -3446,6 +3590,13 @@ RECOMP_PATCH u8 setAction(s16 actionIndex, Actor *actor, u8 playerIndex) {
 #define COOP_P_VINE   1
 #define COOP_P_COUNT  1
 static u8 coop_pickup_player = 0; // player whose pickup test is running (read by changeCollectableCount)
+// Player whose HUD must react to a HUD event (item appears, counter changes): the Kong that picks something up, or
+// the Kong whose actor is currently being updated.
+int coop_hud_owner(void) {
+    if (!coop_active_here()) return 0;
+    if (coop_pickup_player == 1) return 1;
+    return cc_player_index == 1 ? 1 : 0;
+}
 #if COOP_P_GRAB
 // Diagnostic switches for the latest co-op patches (1 = enabled, 0 = original game code).
 // ---- Story co-op: grabbable props (vines, trees, ladders) ----
@@ -3483,6 +3634,7 @@ extern u8 D_global_asm_807FD738;
 extern void func_global_asm_806F603C(void);
 extern u8 func_global_asm_806F6E58(s16);
 extern void func_global_asm_806F69A8(u8);
+extern CoopQ36 *D_global_asm_807FD734;
 
 RECOMP_PATCH void func_global_asm_806F6F28(void) {
     u8 sp45;
@@ -3520,9 +3672,37 @@ RECOMP_PATCH void func_global_asm_806F6F28(void) {
             PaaD->unk1F4 &= ~2;
         }
         if ((character_change_array[playerIndex].playerPointer->control_state != 0x36) && !D_global_asm_807FD738) {
+            CoopQ36 *keep_head = NULL, *keep_tail = NULL, *held_head = NULL, *held_tail = NULL, *q, *nx;
             cc_player_index = playerIndex;
             coop_pickup_player = playerIndex;
+            // The pending-pickup list (D_global_asm_807FD730: flying "collected" items) is global and func_global_asm_806F69A8
+            // advances EVERY item of it on each call and applies the arrival to the calling player. With one call per Kong
+            // the animations ran twice as fast and an item was credited to whichever Kong's call finished it. So each call only
+            // sees the items its player owns (unk1B), the others are put back afterwards.
+            for (q = D_global_asm_807FD730; q != NULL; q = nx) {
+                nx = q->next;
+                q->next = NULL;
+                if ((q->unk1B == 1 ? 1 : 0) == playerIndex) {
+                    if (keep_tail) keep_tail->next = q; else keep_head = q;
+                    keep_tail = q;
+                } else {
+                    if (held_tail) held_tail->next = q; else held_head = q;
+                    held_tail = q;
+                }
+            }
+            D_global_asm_807FD730 = keep_head;
+            D_global_asm_807FD734 = NULL; // force the original code to recompute the tail of the (filtered) list
             func_global_asm_806F69A8(playerIndex);
+            if (held_head != NULL) {
+                if (D_global_asm_807FD730 == NULL) {
+                    D_global_asm_807FD730 = held_head;
+                } else {
+                    q = D_global_asm_807FD730;
+                    while (q->next != NULL) q = q->next;
+                    q->next = held_head;
+                }
+            }
+            D_global_asm_807FD734 = NULL;
             coop_pickup_player = 0;
         }
     }
@@ -3574,6 +3754,7 @@ extern void func_global_asm_806F8278(u8);
 extern void playSong(s32, f32);
 extern u8 getLevelIndex(u8 map, u8 arg1);
 
+extern int coop_hud_n;
 RECOMP_PATCH void changeCollectableCount(s32 HUDItemIndex, u8 playerIndex, s16 amount) {
     CoopHUDItem *HUDItem;
     CoopCharProgress *sp48;
@@ -3582,24 +3763,18 @@ RECOMP_PATCH void changeCollectableCount(s32 HUDItemIndex, u8 playerIndex, s16 a
     s32 flagIndex;
     s32 amountBefore;
     u16 *cnt;
-    u8 kong = current_character_index[playerIndex];
-    static int coop_cc_dbg = 0;
+    u8 kong;
+    int coop2 = coop_active_here() && coop_hud_n == 2;
 
+    // A pickup made by P2 is reported as player 0 by the deferred pickup queue: it belongs to P2's HUD counters
+    // (per-Kong fields point into P1's progress at P2's Kong, pools point into P2's own progress).
+    if (coop2 && playerIndex == 0 && coop_pickup_player == 1) {
+        playerIndex = 1;
+    }
+    kong = current_character_index[playerIndex];
     HUDItem = func_global_asm_806F7FD0(playerIndex);
     cnt = HUDItem[HUDItemIndex].actual_count_pointer;
-    if (coop_active_here() && playerIndex == 0 && coop_pickup_player == 1 && current_character_index[1] < 5) {
-        u8 *base = (u8 *)&D_global_asm_807FC950[0];
-        u32 off = (u32)((u8 *)cnt - base);
-        if (coop_cc_dbg < 40) {
-            coop_cc_dbg++;
-            recomp_printf("[coop] collect item=%d amt=%d P2 kong=%d off=0x%x\n", (int)HUDItemIndex, (int)amount, (int)current_character_index[1], (unsigned)off);
-        }
-        if (off < 6 * 0x5E) {
-            cnt = (u16 *)(base + (off % 0x5E) + current_character_index[1] * 0x5E);
-            kong = current_character_index[1];
-        }
-    }
-    sp48 = (CoopCharProgress *)&D_global_asm_807FC950[playerIndex * 0x306 + kong * 0x5E];
+    sp48 = (CoopCharProgress *)&D_global_asm_807FC950[((coop2 ? 0 : playerIndex) * 0x306) + kong * 0x5E];
     if (((HUDItem[HUDItemIndex].unk_2d == 0) || (amount >= 0)) && (HUDItem[HUDItemIndex].unk_2c == 0)) {
         if ((HUDItemIndex != 0xA) && (HUDItemIndex != 0xC)) {
             if (((*cnt) + amount) < 0) {
@@ -3650,11 +3825,6 @@ static int coop_pad_shared(void) {
         Actor *other = character_change_array[cc_player_index ? 0 : 1].playerPointer;
         if (me != NULL && other != NULL && other != me && me->locked_to_pad == 1 && other->locked_to_pad == 1
             && other->unk10C == me->unk10C) {
-            static int coop_padshare_dbg = 0;
-            if (coop_padshare_dbg < 20) {
-                coop_padshare_dbg++;
-                recomp_printf("[coop] pad shared by both Kongs (prop %d): teleport refused for p=%d\n", (int)me->unk10C, (int)cc_player_index);
-            }
             return 1;
         }
     }
@@ -3664,14 +3834,6 @@ static int coop_pad_shared(void) {
 
 RECOMP_PATCH void func_global_asm_806E2F3C(void) {
     s32 phi_v1 = 1;
-    if (coop_active_here() && D_global_asm_807FBB70.unk2 != 0) {
-        static int coop_padv_dbg = 0;
-        if (coop_padv_dbg < 40) {
-            coop_padv_dbg++;
-            recomp_printf("[coop] padstate p=%d type=%d dest=(%d,%d,%d) ang=%d\n", (int)cc_player_index, (int)D_global_asm_807FBB70.unk14,
-                (int)D_global_asm_807FBB70.unk4, (int)D_global_asm_807FBB70.unk8, (int)D_global_asm_807FBB70.unkC, (int)D_global_asm_807FBB70.unk10);
-        }
-    }
     if (cc_number_of_players >= 2 || (coop_active_here() && cc_player_index == 1)) {
         phi_v1 = coop_pad_shared() ? 1 : !func_global_asm_806E56EC();
     }
@@ -3703,12 +3865,11 @@ RECOMP_PATCH void func_global_asm_8062BAE4(void) {
     u8 saved_k0 = current_character_index[0];
     int swapped = 0;
 
-    if (coop_active_here() && character_change_array[1].does_player_exist
+    if (coop_active_here() && current_map != MAP_TROFF_N_SCOFF && // Troff 'n' Scoff circle: P1 only (the swap made P2's step feed P1's bananas and warp both Kongs)
+        character_change_array[1].does_player_exist
         && character_change_array[1].playerPointer != NULL && saved_c0 != NULL) {
         Actor *p2 = character_change_array[1].playerPointer;
         if (p2->locked_to_pad == 1 && saved_c0->locked_to_pad != 1) {
-            static int coop_pad_dbg = 0;
-            if (coop_pad_dbg < 20) { coop_pad_dbg++; recomp_printf("[coop] pad swap: P2 on pad (prop %d)\n", (int)p2->unk10C); }
             gPlayerPointer = p2;
             character_change_array[0].playerPointer = p2;
             current_character_index[0] = current_character_index[1];
@@ -3726,20 +3887,12 @@ RECOMP_PATCH void func_global_asm_8062BAE4(void) {
     }
 }
 
-// ---- Story co-op debug: log the warp-pad state seen by each player when Z is pressed (func_global_asm_806E4D84) ----
+// ---- Story co-op: warp pad action (func_global_asm_806E4D84) ----
 extern f32 D_global_asm_807531E0[];
 extern s16 D_global_asm_807534D4[];
 extern f32 D_global_asm_807534B8[];
 
 RECOMP_PATCH void func_global_asm_806E4D84(void) {
-    if (coop_active_here() && D_global_asm_807FBB70.unk2 != 0) {
-        static int coop_padv2_dbg = 0;
-        if (coop_padv2_dbg < 40) {
-            coop_padv2_dbg++;
-            recomp_printf("[coop] padstate p=%d type=%d dest=(%d,%d,%d) ang=%d\n", (int)cc_player_index, (int)D_global_asm_807FBB70.unk14,
-                (int)D_global_asm_807FBB70.unk4, (int)D_global_asm_807FBB70.unk8, (int)D_global_asm_807FBB70.unkC, (int)D_global_asm_807FBB70.unk10);
-        }
-    }
     if (coop_pad_shared() || !func_global_asm_806E56EC()) {
         if (extra_player_info_pointer->unkC8 == -1) {
             if (current_character_index[cc_player_index] != 6 || gCurrentActorPointer->unkB8 < D_global_asm_807531E0[D_global_asm_807FD584]) {
@@ -4021,7 +4174,6 @@ RECOMP_PATCH void func_global_asm_8068412C(void) {
         // selection scene running: for P2 its screen shows camera 0 (see func_global_asm_8062BF24)
         if (prev_state != 1 && gCurrentActorPointer->control_state == 1) {
             coop_barrel_user_actor = YaaD->unk0;
-            recomp_printf("[coop] barrel: selection starts, user=P%d\n", coop_barrel_player_index(YaaD->unk0) + 1);
         }
         // selection (state 1) + exit wait (state 2) + a grace period while the cutscene finishes
         if (gCurrentActorPointer->control_state != 0) coop_barrel_sel = 120;
@@ -4035,21 +4187,10 @@ RECOMP_PATCH void func_global_asm_8068412C(void) {
             coop_barrel_chooser = -1;
             coop_barrel_spot = NULL;
         }
-        if (gCurrentActorPointer->control_state == 1) {
-            static int coop_bdbg = 0;
-            if ((++coop_bdbg % 60) == 1) {
-                Actor *a0 = character_change_array[0].playerPointer;
-                Actor *a1 = character_change_array[1].playerPointer;
-                recomp_printf("[coop] barrel sel: cs=%d busy=%d P1(%d,%d,%d) P2(%d,%d,%d)\n", (int)is_cutscene_active, coop_barrel_busy,
-                    a0 ? (int)a0->x_position : 0, a0 ? (int)a0->y_position : 0, a0 ? (int)a0->z_position : 0,
-                    a1 ? (int)a1->x_position : 0, a1 ? (int)a1->y_position : 0, a1 ? (int)a1->z_position : 0);
-            }
-        }
         if (prev_state == 1 && gCurrentActorPointer->control_state != 1) {
             // selection finished: repair the cameras (the original re-inits the user's camera with index 0)
             int k;
             int uidx = coop_barrel_player_index(YaaD->unk0);
-            recomp_printf("[coop] barrel: selection done, user=P%d state=%d\n", uidx + 1, (int)gCurrentActorPointer->control_state);
             if (uidx > 0) { // P2 chose: P2's camera (index 0 used by the original) and P1's (left in cutscene mode) are re-initialised
                 for (k = 0; k < 2; k++) {
                     if (character_change_array[k].does_player_exist && character_change_array[k].playerPointer != NULL) {
@@ -4070,5 +4211,355 @@ RECOMP_PATCH void func_global_asm_8068412C(void) {
         YaaD->unk28 += 0x32;
         YaaD->unk28 &= 0xFFF;
     }
+    renderActor(gCurrentActorPointer, 0);
+}
+
+// ---- Story co-op: positional sounds (2nd function, camera 0 only in the original) ----
+// Same as the original, but in co-op uses the nearest of the two Kong cameras.
+extern void *func_global_asm_80737638(void *, s16, u16, u8, f32, u8, void *);
+extern void func_global_asm_80737924(void *);
+extern void *D_global_asm_807457C8;
+extern u8 D_global_asm_80745838;
+extern void *D_global_asm_8076D1F8;
+extern void *D_global_asm_8076D1FC;
+extern u8 D_global_asm_8077058E;
+extern f32 D_global_asm_80770DE4;
+extern f32 func_global_asm_80665E48(f32, f32, f32, f32);
+extern f32 func_global_asm_80612D1C(f32);
+
+RECOMP_PATCH void func_global_asm_8060956C(f32 arg0, f32 arg1, f32 arg2, s16 arg3, u8 arg4, f32 arg5, u8 arg6, u8 arg7) {
+    f32 temp_f2;
+    s32 var_v1;
+    f32 temp_f14;
+    u8 sp43;
+    f64 var_f6;
+    void *temp;
+    int cam = 0;
+
+    if (coop_active_here() && character_change_array[1].does_player_exist) {
+        f32 d0 = SQ(character_change_array[0].look_at_eye_x - arg0) + SQ(character_change_array[0].look_at_eye_y - arg1) + SQ(character_change_array[0].look_at_eye_z - arg2);
+        f32 d1 = SQ(character_change_array[1].look_at_eye_x - arg0) + SQ(character_change_array[1].look_at_eye_y - arg1) + SQ(character_change_array[1].look_at_eye_z - arg2);
+        if (d1 < d0) {
+            cam = 1;
+        }
+    }
+
+    sp43 = 0;
+    D_global_asm_80770DE4 = _sqrtf(
+        SQ((s32)(character_change_array[cam].look_at_eye_x - arg0)) +
+        SQ((s32)(character_change_array[cam].look_at_eye_y - arg1)) +
+        SQ((s32)(character_change_array[cam].look_at_eye_z - arg2)));
+    if (D_global_asm_80770DE4 < 1.0f) {
+        D_global_asm_80770DE4 = 1.0f;
+    }
+    temp_f2 = arg7 * 4000;
+    var_v1 = ((temp_f2 / _sqrtf(D_global_asm_80770DE4)) - ((temp_f2 / 7.745966) - 32767.0));
+    if (var_v1 >= 0x8000) {
+        var_v1 = 0x7FFF;
+    }
+    var_v1 = (arg4 * var_v1) / 255.0;
+    if (var_v1 >= 0x8000) {
+        var_v1 = 0x7FFF;
+    }
+    if (var_v1 >= 0x3E9) {
+        var_v1 = (arg4 * var_v1) / 255.0;
+        if (arg6 != 0) {
+            var_f6 = func_global_asm_806119A0() / (f64)0xFFFFFFFF;
+            var_f6 *= (arg6 / 155.0);
+            var_v1 = (1.0 - var_f6) * var_v1;
+            arg5 = ((func_global_asm_806119A0() / (f64)0xFFFFFFFF) * (arg6 / 100.0)) + (arg5 - (arg6 / 255.0));
+        }
+        temp_f14 = func_global_asm_80665E48(character_change_array[cam].look_at_eye_x, character_change_array[cam].look_at_eye_z, arg0, arg2) - character_change_array[cam].unk2C4;
+        if (temp_f14 < 0.0f) {
+            temp_f14 += MATH_2PI_F;
+        }
+        if ((0.25f * MATH_PI_F) < temp_f14) {
+            if (temp_f14 < (1.75 * MATH_PI_F)) {
+                var_v1 = ((func_global_asm_80612D1C(((2.0 * temp_f14) / 3.0) + 2.617993950843811) * 0.3) + 1.0) * var_v1;
+            }
+        }
+        temp_f14 = (1.0f - func_global_asm_80612D1C(temp_f14)) * 63.5;
+        if (D_global_asm_80745838) {
+            sp43 = 0x1E;
+        } else if (D_global_asm_8077058E >= 0x15) {
+            sp43 = (D_global_asm_8077058E * 100) / 255;
+        }
+        temp = D_global_asm_807457C8;
+        if (temp) {
+            func_global_asm_80737924(temp);
+        }
+        if (arg3 < 0x800) {
+            func_global_asm_80737638(D_global_asm_8076D1F8, arg3, var_v1, temp_f14, arg5, sp43, &D_global_asm_807457C8);
+        } else {
+            func_global_asm_80737638(D_global_asm_8076D1FC, arg3 - 0x7FF, var_v1, temp_f14, arg5, sp43, &D_global_asm_807457C8);
+        }
+    }
+}
+
+// ---- Story co-op: actor/ambient looping sounds (wing flaps etc.) ----
+// func_global_asm_80602E6C (asm) computes volume/pan from camera 0 only. We temporarily put the
+// nearest Kong's camera data in slot 0 while it runs, then restore.
+extern f32 func_global_asm_80602E6C(f32, f32, f32, u8, u8, f32);
+extern f32 D_global_asm_80770DDC;
+extern f32 D_global_asm_80770DE0;
+extern f32 D_global_asm_80770DE8;
+extern f32 D_global_asm_80770DEC;
+extern f32 D_global_asm_80770DF0;
+extern f32 D_global_asm_80770DF4;
+
+RECOMP_PATCH f32 func_global_asm_80603340(f32 arg0, f32 arg1, f32 arg2, u8 arg3, u8 arg4, f32 arg5) {
+    f32 temp_f0;
+    f32 temp_f2;
+    f32 s[7];
+    int swapped = 0;
+
+    if (coop_active_here() && character_change_array[1].does_player_exist) {
+        f32 d0 = SQ(character_change_array[0].look_at_eye_x - arg0) + SQ(character_change_array[0].look_at_eye_y - arg1) + SQ(character_change_array[0].look_at_eye_z - arg2);
+        f32 d1 = SQ(character_change_array[1].look_at_eye_x - arg0) + SQ(character_change_array[1].look_at_eye_y - arg1) + SQ(character_change_array[1].look_at_eye_z - arg2);
+        if (d1 < d0) {
+            swapped = 1;
+            s[0] = character_change_array[0].look_at_eye_x; s[1] = character_change_array[0].look_at_eye_y; s[2] = character_change_array[0].look_at_eye_z;
+            s[3] = character_change_array[0].look_at_at_x;  s[4] = character_change_array[0].look_at_at_y;  s[5] = character_change_array[0].look_at_at_z;
+            s[6] = character_change_array[0].unk2C4;
+            character_change_array[0].look_at_eye_x = character_change_array[1].look_at_eye_x;
+            character_change_array[0].look_at_eye_y = character_change_array[1].look_at_eye_y;
+            character_change_array[0].look_at_eye_z = character_change_array[1].look_at_eye_z;
+            character_change_array[0].look_at_at_x = character_change_array[1].look_at_at_x;
+            character_change_array[0].look_at_at_y = character_change_array[1].look_at_at_y;
+            character_change_array[0].look_at_at_z = character_change_array[1].look_at_at_z;
+            character_change_array[0].unk2C4 = character_change_array[1].unk2C4;
+        }
+    }
+
+    temp_f0 = func_global_asm_80602E6C(arg0, arg1, arg2, arg3, arg4, arg5);
+
+    if (swapped) {
+        character_change_array[0].look_at_eye_x = s[0]; character_change_array[0].look_at_eye_y = s[1]; character_change_array[0].look_at_eye_z = s[2];
+        character_change_array[0].look_at_at_x = s[3];  character_change_array[0].look_at_at_y = s[4];  character_change_array[0].look_at_at_z = s[5];
+        character_change_array[0].unk2C4 = s[6];
+    }
+
+    if (temp_f0 < 10.0f) {
+        return 0.0f;
+    }
+    temp_f2 = D_global_asm_80770DDC * 0.007874015748031496;
+    D_global_asm_80770DE8 += temp_f0 * temp_f2;
+    D_global_asm_80770DEC += temp_f0 * (1.0f - temp_f2);
+    if (D_global_asm_80770DE0 > 0.0f) {
+        D_global_asm_80770DF0 += temp_f0 * D_global_asm_80770DE0;
+    }
+    if (D_global_asm_80770DE0 < 0.0f) {
+        D_global_asm_80770DF4 -= temp_f0 * D_global_asm_80770DE0;
+    }
+    return temp_f0;
+}
+
+// ---- Story co-op: trigger zones (cave entrances, etc.) must also react to P2 ----
+typedef struct { s16 type; u16 args[4]; } CoopTrigSub;
+typedef struct {
+    s16 x; s16 y; s16 z; s16 radius; s16 height; s16 unkA;
+    u8 activation_type; u8 default_active_state; u8 unkE; u8 unkF;
+    CoopTrigSub data[4];
+} CoopTrigRaw;
+typedef struct { CoopTrigRaw raw; u8 not_in_zone; u8 active; } CoopTrigData;
+
+extern s16 D_global_asm_8076A0AA;
+extern s32 func_global_asm_807318AC(s32, s32);
+
+RECOMP_PATCH u8 func_global_asm_8072EA90(CoopTrigData *arg0) {
+    u8 var_t3 = FALSE;
+    u8 var_t4 = 0;
+    u8 playerIndex;
+    u8 n = coop_active_here() ? 2 : cc_number_of_players;
+    f32 d;
+
+    for (playerIndex = 0; playerIndex < n; playerIndex++) {
+        if (character_change_array[playerIndex].does_player_exist != 0 && character_change_array[playerIndex].playerPointer != NULL) {
+            Actor *pp = character_change_array[playerIndex].playerPointer;
+            if (arg0->raw.height == -1 || (arg0->raw.y <= pp->y_position && pp->y_position < (arg0->raw.y + arg0->raw.height))) {
+                d = ((arg0->raw.x - pp->x_position) * (arg0->raw.x - pp->x_position)) + ((arg0->raw.z - pp->z_position) * (arg0->raw.z - pp->z_position));
+                if (d < (arg0->raw.radius * arg0->raw.radius)) {
+                    var_t3 = TRUE;
+                }
+            }
+        }
+    }
+    switch (arg0->raw.activation_type) {
+        case 0:
+            if (var_t3 && arg0->not_in_zone == 1 && arg0->active != 0) { var_t4 = 1; }
+            break;
+        case 1:
+            if (!var_t3 && arg0->not_in_zone == 0 && arg0->active != 0) { var_t4 = 1; }
+            break;
+        case 2:
+            if (var_t3 && arg0->active != 0) { var_t4 = 1; }
+            break;
+    }
+    if (var_t4 != 0) {
+        if (func_global_asm_807318AC(D_global_asm_8076A0AA, arg0->raw.unkA) == 0) {
+            var_t4 = 0;
+        }
+    }
+    arg0->not_in_zone = var_t3 ? 0 : 1;
+    return var_t4;
+}
+
+// ---- Story co-op: "no skybox" background (tunnels/temples in Aztec...) ----
+// The original fills the WHOLE screen with black, then restores the scissor to camera 0's viewport. Called while drawing
+// P2's viewport it wiped P1's already drawn half (and left a wrong scissor). In co-op: fill/restore only the viewport of
+// the camera being drawn.
+extern s16 D_global_asm_80744498;
+extern s16 D_global_asm_8074449C;
+extern s16 D_global_asm_807444A0;
+extern s16 D_global_asm_807444A4;
+
+RECOMP_PATCH Gfx *func_global_asm_8070770C(Gfx *dl) {
+    int cam = 0;
+    s16 x0 = D_global_asm_80744498, y0 = D_global_asm_8074449C, x1 = D_global_asm_807444A0, y1 = D_global_asm_807444A4;
+
+    if (coop_active_here() && cc_player_index >= 0 && cc_player_index < 2) {
+        cam = cc_player_index;
+        x0 = character_change_array[cam].unk270[0];
+        y0 = character_change_array[cam].unk270[1];
+        x1 = character_change_array[cam].unk270[2];
+        y1 = character_change_array[cam].unk270[3];
+    }
+    gDPPipeSync(dl++);
+    gDPSetRenderMode(dl++, G_RM_NOOP, G_RM_NOOP2);
+    gDPSetFillColor(dl++, 0x00010001);
+    gDPSetCycleType(dl++, G_CYC_FILL);
+    gDPSetScissor(dl++, G_SC_NON_INTERLACE, x0, y0, x1, y1);
+    gDPFillRectangle(dl++, x0, y0, x1 - 1, y1 - 1);
+    gDPPipeSync(dl++);
+    gDPSetScissor(dl++, G_SC_NON_INTERLACE,
+        character_change_array[cam].unk270[0],
+        character_change_array[cam].unk270[1],
+        character_change_array[cam].unk270[2],
+        character_change_array[cam].unk270[3]);
+    gDPSetCycleType(dl++, G_CYC_1CYCLE);
+    return dl;
+}
+
+
+// ---- Troff 'n' Scoff hippo (feeding), co-op ----
+// The original reads gPlayerPointer for the Kong that feeds (camera, facing the hippo, bananas flying to the Kong). In
+// co-op gPlayerPointer can be P2 while P1 is the one feeding (log: effect target = P2), so P2 was turned towards the
+// hippo and P1 kept its own direction. Use the Kong that is in the feeding state (0x6C) instead.
+extern u16 D_global_asm_807FC930[];
+extern u16 D_global_asm_807446C0[];
+typedef struct { u8 pad0[0x28]; s32 unk28; s16 unk2C; s16 unk2E; f32 unk30; } CoopStruct807FDC90;
+extern CoopStruct807FDC90 *D_global_asm_807FDC90;
+extern u8 func_global_asm_806BDD90(void);
+extern u16 func_global_asm_806F8AD4(u8, u8);
+extern void func_global_asm_8061C518(Actor *, Actor *, u8, s16, s16, s16, s16, s16, s16, s16, f32);
+extern void func_global_asm_80724E48(u8);
+extern void func_global_asm_807248B0(Actor *, f32);
+extern void func_global_asm_80685520(f32, u8, f32, f32, f32);
+extern void func_global_asm_8071D0F0(void *, void *);
+extern void *func_global_asm_806FACE8(u32);
+// CharacterProgress (stride 0x5E): coloured_bananas_fed_to_tns[14] at +0x26
+#define COOP_FED_TNS(k) ((u16 *)(D_global_asm_807FC950 + (k) * 0x5E + 0x26))
+extern void coop_hud_hide_item(int item, int player);
+RECOMP_PATCH void func_global_asm_806BE09C(void) {
+    PlayerAdditionalActorData *sp4C;
+    u8 levelIndex;
+    f32 sp44;
+    f32 temp_f2;
+    u16 *sp3C;
+    s32 i;
+    s32 count = 0;
+    Actor *pl = gPlayerPointer;
+
+    if (coop_active_here()) {
+        Actor *k0 = character_change_array[0].playerPointer;
+        Actor *k1 = character_change_array[1].playerPointer;
+        if (k0 != NULL && k0->control_state == 0x6C) pl = k0;
+        else if (k1 != NULL && k1->control_state == 0x6C) pl = k1;
+    }
+    sp4C = pl->additional_actor_data;
+    levelIndex = getLevelIndex(current_map, 0);
+    sp44 = D_global_asm_807FC930[levelIndex] / (f32)D_global_asm_807446C0[levelIndex];
+    if (func_global_asm_806BDD90() == 1) {
+        D_global_asm_807FDC90->unk2C = func_global_asm_806F8AD4(0, 0);
+        if (D_global_asm_807FDC90->unk2C != 0) {
+            gCurrentActorPointer->control_state = 0x12;
+            gCurrentActorPointer->control_state_progress = 0;
+            D_global_asm_807FDC90->unk2E = 0x32;
+            playActorAnimation(gCurrentActorPointer, 0x28A);
+            func_global_asm_8061C518(sp4C->unk104, pl, 4, 0x990, 0x5A, -0x2E, 0x3C, 0xA, 0x20, 0, 0.3000000119f);
+            pl->y_rotation = func_global_asm_80665DE0(gCurrentActorPointer->x_position, gCurrentActorPointer->z_position, pl->x_position, pl->z_position);
+            pl->unkEE = pl->y_rotation;
+        }
+    }
+    func_global_asm_80724E48(0);
+    if (sp44 > 1.0f) {
+        sp44 = 1.0f;
+    }
+    temp_f2 = D_global_asm_807FDC90->unk30 + ((0.44 - D_global_asm_807FDC90->unk30) * sp44);
+    if (ACTOR_UNINITIALIZED(gCurrentActorPointer)) {
+        func_global_asm_807248B0(gCurrentActorPointer, temp_f2);
+    }
+    switch (gCurrentActorPointer->control_state) {
+        case 0x12:
+            func_global_asm_807248B0(gCurrentActorPointer, ((temp_f2 - gCurrentActorPointer->animation_state->scale_x) * 0.1) + gCurrentActorPointer->animation_state->scale_x);
+            switch (gCurrentActorPointer->control_state_progress) {
+                case 0:
+                    if (D_global_asm_807FDC90->unk2E != 0) {
+                        D_global_asm_807FDC90->unk2E--;
+                        if (D_global_asm_807FDC90->unk2E == 0) {
+                            func_global_asm_8061C518(sp4C->unk104, gCurrentActorPointer, 4, 0x305, 0x14A, 3, 0x32, 0x7F, 0x5A, 0, 0.02999999933f);
+                        }
+                    }
+                    if (D_global_asm_807FDC90->unk2C != 0) {
+                        if (!(object_timer & 3)) {
+                            sp3C = COOP_FED_TNS(current_character_index[0]);
+                            D_global_asm_807FDC90->unk2C--;
+                            changeCollectableCount(0, 0, -1);
+                            sp3C[levelIndex]++;
+                            for (i = 0; i < 5; i++) { count += COOP_FED_TNS(i)[levelIndex]; }
+                            if (count >= D_global_asm_807446C0[levelIndex]) {
+                                D_global_asm_807FDC90->unk2C = 0;
+                                coop_hud_hide_item(0, (pl == character_change_array[1].playerPointer) ? 1 : 0);
+                            }
+                            func_global_asm_8071498C(func_global_asm_8071D0F0);
+                            func_global_asm_807149FC(-1);
+                            func_global_asm_807149B8(1);
+                            func_global_asm_80714950((s32)gCurrentActorPointer);
+                            func_global_asm_80714C08(func_global_asm_806FACE8(0), 0.3f, pl, 4, 0);
+                        }
+                    } else if (D_global_asm_807FDC90->unk2E == 0) {
+                        D_global_asm_807FDC90->unk2C = 0x1E;
+                        gCurrentActorPointer->control_state_progress = 1;
+                    }
+                    break;
+                case 1:
+                    if (D_global_asm_807FDC90->unk2C != 0) {
+                        D_global_asm_807FDC90->unk2C--;
+                    } else {
+                        playActorAnimation(gCurrentActorPointer, 0x28B);
+                        gCurrentActorPointer->control_state = 0x27;
+                        gCurrentActorPointer->control_state_progress = 0;
+                    }
+                    break;
+            }
+            break;
+        case 0x27:
+            if (gCurrentActorPointer->control_state_progress == 1) {
+                func_global_asm_80685520(4.0f, 1, gCurrentActorPointer->x_position, gCurrentActorPointer->y_position + 5.0f, gCurrentActorPointer->z_position);
+                gCurrentActorPointer->control_state = 0x28;
+                gCurrentActorPointer->control_state_progress = 0;
+                D_global_asm_807FDC90->unk2C = 0x3C;
+            }
+            break;
+        case 0x28:
+            D_global_asm_807FDC90->unk2C -= 1;
+            if (D_global_asm_807FDC90->unk2C == 0) {
+                gCurrentActorPointer->control_state = 0;
+                gCurrentActorPointer->control_state_progress = 0;
+                D_global_asm_807FDC90->unk2E = 0;
+            }
+            break;
+    }
+    func_global_asm_8072881C(0, (s32 *)&D_global_asm_807FDC90->unk28);
     renderActor(gCurrentActorPointer, 0);
 }
