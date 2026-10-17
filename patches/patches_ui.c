@@ -99,7 +99,13 @@ extern u8 current_character_index[];
 static int coop_hud_on(void) { return coop_hud_n == 2 && cc_number_of_players == 1; }
 static f32 coop_hud_sz(void) { return coop_hud_on() ? COOP_HUD_SIZE : 1.0f; }
 
+extern void *coop_pause_half(int *rect, f32 xk);
+extern void *coop_frame_hdr_get(void);
+extern int coop_pause_half_wanted(void);
+extern void func_global_asm_806AC07C(Struct80717D84* arg0, s8* arg1);
 RECOMP_PATCH Gfx * func_global_asm_80715E94(Struct80717D84* sprite, Gfx *dl, s16 arg2) {
+    int pause_r[4];
+    void *pause_half = NULL;
     s32 i;
     u8 sp15B;
     u8 sp15A;
@@ -121,6 +127,11 @@ RECOMP_PATCH Gfx * func_global_asm_80715E94(Struct80717D84* sprite, Gfx *dl, s16
         return dl;
     }
     raw_alignment = sprite->unk36F;
+    // co-op: the sprites of the reduced pause menu are not anchored to the left / right edges of the screen (like the menu text),
+    // so that they stay next to their numbers
+    if (raw_alignment != 0 && sprite->unk328 == (void *)&func_global_asm_806AC07C && coop_pause_half_wanted()) {
+        raw_alignment = 1;
+    }
     if (sprite->unk36F & ALIGN_HIDING_IN_OVERSCAN) {
         if (((sprite->unk340 * 0.25) < 11) || ((sprite->unk340 * 0.25) > 309)) {
             return dl;
@@ -183,7 +194,20 @@ RECOMP_PATCH Gfx * func_global_asm_80715E94(Struct80717D84* sprite, Gfx *dl, s16
         sp14C = (sp159 / 255.0);
     }
     gDPSetPrimColor(temp_s0++, 0, 0, sprite->unk36A * sp154, sprite->unk36B * sp150, sprite->unk36C * sp14C, sprite->unk36D);
+    // co-op: the sprites of the pause menu follow the menu into the half of the screen of the player who paused
+    if (raw_alignment != 0 && sprite->unk328 == (void *)&func_global_asm_806AC07C) {
+        // the sprite matrices are widened horizontally by the aspect of the window (RT64 aspect handling), unlike the menu text
+        {
+            s32 uiw_, uih_;
+            recomp_get_ui_bounds(&uiw_, &uih_); // width of the screen in game pixels: 320 (4:3), 427 (16:9 expanded)...
+            (void)uiw_;
+            pause_half = coop_pause_half(pause_r, 1.0f);
+        }
+    }
     if (raw_alignment != 0) {
+        if (pause_half != NULL) {
+            gSPSegment(temp_s0++, 0x02, osVirtualToPhysical(pause_half));
+        }
         gSPMatrix(temp_s0++, &D_20000C0, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
         gSPMatrix(temp_s0++, &D_2000180, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
         temp_s0 = func_global_asm_805FD030(temp_s0);
@@ -197,6 +221,10 @@ RECOMP_PATCH Gfx * func_global_asm_80715E94(Struct80717D84* sprite, Gfx *dl, s16
                 );
             }
         }
+    }
+    if (pause_half != NULL) {
+        gDPPipeSync(temp_s0++);
+        gDPSetScissorFrac(temp_s0++, G_SC_NON_INTERLACE, pause_r[0] * 4.0f, pause_r[1] * 4.0f, pause_r[2] * 4.0f, pause_r[3] * 4.0f);
     }
     gSPMatrix(temp_s0++, osVirtualToPhysical(coop_sprite_mtx(sprite->unk128[coop_sprite_slot()][D_global_asm_807444FC], raw_alignment, sprite->unk28)), G_MTX_PUSH | G_MTX_MUL | G_MTX_MODELVIEW);
     for (i = 0; i < sprite->unk380; i++) {
@@ -252,6 +280,11 @@ RECOMP_PATCH Gfx * func_global_asm_80715E94(Struct80717D84* sprite, Gfx *dl, s16
     gSPPopMatrix(temp_s0++, G_MTX_MODELVIEW);
     gDPPipeSync(temp_s0++);
     gDPSetColorDither(temp_s0++, G_CD_MAGICSQ);
+    if (pause_half != NULL) {
+        gSPSegment(temp_s0++, 0x02, osVirtualToPhysical(coop_frame_hdr_get()));
+        gDPPipeSync(temp_s0++);
+        gDPSetScissor(temp_s0++, G_SC_NON_INTERLACE, 0, 0, D_global_asm_80744490, D_global_asm_80744494);
+    }
     if (raw_alignment != 0) {
         gSPMatrix(temp_s0++, &D_2000000, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
         gSPMatrix(temp_s0++, &D_2000200, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
@@ -1258,6 +1291,52 @@ extern Gfx *func_global_asm_806FEDB0(Gfx *dl, u8 arg1);
 extern u16 func_global_asm_806F8AD4(u8 arg0, u8 playerIndex);
 extern s32 func_global_asm_80690F30(u16, s32*, Actor *, u8, u8, u8, s32*, s32*, s32*);
 
+// ---- Story co-op: first-person (aim) overlays: crosshair, scope, vignette (func_global_asm_806FEDB0) ----
+// All of them start with func_global_asm_806FEDB0, which sets the viewport of the aiming Kong (his half of the screen: half height) and draws a
+// 320 x 240 layout in it, so the crosshair was squashed and the viewport stayed set for the HUD that follows. In co-op the overlay is drawn with the
+// full-screen state instead, clipped to the Kong's half, with a pixel ortho shifted so that the layout's centre (160, 120) is the centre of his half
+// (same proportions as in a full-screen game). _orig is the original body.
+extern int coop_wx_two(void);
+extern int coop_wx_range(int owner, int *top, int *bottom);
+extern Gfx *func_global_asm_805FD030(Gfx *);
+static Mtx coop_aim_mtx[2][2] __attribute__((aligned(16))); // [player][frame parity]
+
+static Gfx *coop_aim_orig(Gfx *dl, u8 arg1) {
+    gDPPipeSync(dl++);
+    gSPViewport(dl++, osVirtualToPhysical(&character_change_array[arg1].unk250[D_global_asm_807444FC]));
+    gDPSetScissor(
+        dl++,
+        G_SC_NON_INTERLACE,
+        character_change_array[arg1].unk270[0],
+        character_change_array[arg1].unk270[1],
+        character_change_array[arg1].unk270[2],
+        character_change_array[arg1].unk270[3]
+    );
+    gSPDisplayList(dl++, &D_1000118);
+    gDPSetCombineMode(dl++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+    gDPSetRenderMode(dl++, G_RM_CLD_SURF, G_RM_CLD_SURF2);
+    gSPMatrix(dl++, &D_2000080, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    return dl;
+}
+
+RECOMP_PATCH Gfx *func_global_asm_806FEDB0(Gfx *dl, u8 arg1) {
+    int top, bot;
+    if (arg1 < 2 && coop_wx_two() && coop_wx_range(arg1, &top, &bot)) {
+        f32 off = 120.0f - ((f32)(top + bot) * 0.5f);
+        Mtx *m = &coop_aim_mtx[arg1][D_global_asm_807444FC & 1];
+        guOrtho(m, 0.0f, (f32)D_global_asm_80744490 - 1.0f, (f32)D_global_asm_80744494 - 1.0f + off, off, -20000.0f, 20000.0f, 1.0f);
+        gDPPipeSync(dl++);
+        dl = func_global_asm_805FD030(dl);
+        gDPSetScissor(dl++, G_SC_NON_INTERLACE, character_change_array[arg1].unk270[0], top, character_change_array[arg1].unk270[2], bot);
+        gSPDisplayList(dl++, &D_1000118);
+        gDPSetCombineMode(dl++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+        gDPSetRenderMode(dl++, G_RM_CLD_SURF, G_RM_CLD_SURF2);
+        gSPMatrix(dl++, osVirtualToPhysical(m), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+        return dl;
+    }
+    return coop_aim_orig(dl, arg1);
+}
+
 // @recomp: Sniper Scope
 RECOMP_PATCH Gfx *func_global_asm_806FF75C(Gfx* dl, Actor *arg1) {
     u8 temp_a2;
@@ -1825,7 +1904,9 @@ typedef struct Struct807FD9E0_unk4 {
     u8 unkB0;
     u8 unkB1;
     u8 unkB2;
-    u8 padB3[0xB8 - 0xB3];
+    u8 padB3[0xB6 - 0xB3];
+    u8 coop_owner; // co-op: 1 + index of the Kong this particle belongs to (0: whole screen)
+    u8 padB7;
 } Struct807FD9E0_unk4;
 
 typedef struct Struct807FD9E0 {
@@ -1835,6 +1916,9 @@ typedef struct Struct807FD9E0 {
 } Struct807FD9E0;
 
 Gfx* func_global_asm_807105D4(Gfx*, u8);
+extern int coop_wx_get_owner(void);
+extern int coop_wx_two(void);
+extern int coop_wx_range(int owner, int *top, int *bottom);
 extern Struct807FD9E0* D_global_asm_807550E0;
 extern Struct80755264 D_global_asm_80755264[];
 extern f32 D_global_asm_807FD9EC;
@@ -1876,6 +1960,8 @@ RECOMP_PATCH Gfx* func_global_asm_80710CA0(Gfx* dl, Actor* arg1) {
     CameraPaad* temp_a2;
     Struct807FD9E0_unk4* temp_s0_2;
 
+    int cur_own = 0;   // co-op: owner of the particles currently drawn (0: whole screen)
+    int clipped = 0;   // co-op: a scissor was pushed
     temp_s0 = D_global_asm_807550E0->unk0;
     temp_a2 = D_global_asm_807F5D10->AAD_as_array[0];
     spBE = FALSE;
@@ -1920,7 +2006,14 @@ RECOMP_PATCH Gfx* func_global_asm_80710CA0(Gfx* dl, Actor* arg1) {
             temp_s0_2 = &D_global_asm_807550E0->unk4[var_s5];
             D_global_asm_807FDAB0 = temp_s0_2;
             D_global_asm_807FDAB4 = D_global_asm_807FDA1E;
-            if ((temp_s0_2->unkB0 != 0) && (((temp_s0_2->unk0 == -1)) || (func_global_asm_806522CC(temp_s0_2->unk8, temp_s0_2->unkC, temp_s0_2->unk0))) && (!spBF) && (!spBE)) {
+            int own_ = temp_s0_2->coop_owner, show_ = 1, top_ = 0, bot_ = 240;
+            if (own_ != 0) show_ = coop_wx_range(own_ - 1, &top_, &bot_); // co-op: a Kong's particles stay in his half
+            if ((temp_s0_2->unkB0 != 0) && (((temp_s0_2->unk0 == -1)) || (func_global_asm_806522CC(temp_s0_2->unk8, temp_s0_2->unkC, temp_s0_2->unk0))) && (!spBF) && (!spBE) && show_) {
+                if (own_ != cur_own) {
+                    if (!clipped) { gEXPushScissor(dl++); clipped = 1; }
+                    gEXSetScissor(dl++, G_SC_NON_INTERLACE, G_EX_ORIGIN_LEFT, G_EX_ORIGIN_RIGHT, 0, top_, 0, bot_);
+                    cur_own = own_;
+                }
                 gDPSetPrimColor(dl++, 0, 0, D_global_asm_807FDA1B, D_global_asm_807FDA1B, D_global_asm_807FDA1B, temp_s0_2->unkB1);
                 if (D_global_asm_807FDA1C == 4) {
                     switch (temp_s0_2->unk20) {
@@ -1971,6 +2064,7 @@ RECOMP_PATCH Gfx* func_global_asm_80710CA0(Gfx* dl, Actor* arg1) {
                 var_s6++;
                 if (D_global_asm_807FDA24(temp_s0_2) || (temp_s0_2->unk10 < 0.01)) {
                     temp_s0_2->unkB0 = 0U;
+                    temp_s0_2->coop_owner = 0;
                     D_global_asm_807FDA1A++;
                     D_global_asm_807FDA30[D_global_asm_807FDA1A] = var_s5;
                     D_global_asm_807550E0->unk0--;
@@ -1980,8 +2074,84 @@ RECOMP_PATCH Gfx* func_global_asm_80710CA0(Gfx* dl, Actor* arg1) {
         }
     }
 
+    if (clipped) {
+        gEXPopScissor(dl++);
+    }
     dl = popHUD(dl, ALIGN_LEFT);
     return dl;
+}
+
+// co-op storm rain (K. Rool's ship): the particles spawned while a Kong is the weather owner belong to him (see func_global_asm_806443E4)
+extern u8 D_global_asm_8077058C;
+extern f32 *D_global_asm_8076A0B4;
+void func_global_asm_8070F5CC(s32 arg0, s16 arg1, f32 arg2, s16 arg3, s16 arg4, u8 arg5);
+
+extern f32 coop_ship_f(int p);
+
+// Rain / storm particles (original func_global_asm_80711410); in co-op they are tagged with the Kong who spawned them (own: 0/1, -1: none)
+static void coop_rain_spawn(int own, f32 arg0, s16 arg1, f32 arg2, s16 arg3, f32 arg4) {
+    f32 temp_f22;
+    f64 temp_f12;
+    s32 i;
+    s32 var_s5;
+    static u32 queued_at = 0xFFFFFFFF;
+
+    if (global_properties_bitfield & 0x10) {
+        if (D_global_asm_807550E0->unk4 != NULL) {
+            for (i = 0; i < 0x80; i++) {
+                if (D_global_asm_807550E0->unk4[i].unkB0 == 0) D_global_asm_807550E0->unk4[i].coop_owner = 0;
+            }
+        }
+        D_global_asm_807FDA1E = func_global_asm_80612D10(character_change_array[own > 0 ? own : 0].unk2C4) * arg1;
+        temp_f12 = ((f64) arg0 * ((f32) 255.0)) / 3.9;
+        D_global_asm_8077058C = MIN(255.0, temp_f12) * arg2;
+        if ((f64) arg0 < 1.0) {
+            arg0 = arg0 * 100.0f;
+            var_s5 = (RandClamp(32767) % 100) < arg0 ? 1 : 0;
+        } else {
+            var_s5 = arg0;
+        }
+        D_global_asm_807FDA1B = (*D_global_asm_8076A0B4 * 100.0f) + 100.0f;
+        for (i = 0; i < var_s5; i++) {
+            temp_f22 = RandClamp(32767) % 320;
+            func_global_asm_8070F5CC(0, arg3,
+                                     ((((f32) ((RandClamp(32767) % 125) / 800.0)) + 0.1) * 2.5) * arg4,
+                                     temp_f22, -0xA, 90.0f * arg4);
+        }
+        if (own >= 0 && D_global_asm_807550E0->unk4 != NULL) {
+            for (i = 0; i < 0x80; i++) {
+                Struct807FD9E0_unk4 *q = &D_global_asm_807550E0->unk4[i];
+                if (q->unkB0 != 0 && q->coop_owner == 0) q->coop_owner = own + 1;
+            }
+        }
+        if (D_global_asm_807550E0->unk0 != 0) {
+            // (co-op: one call per Kong in the same frame, but the overlay must be queued, and so updated, only once)
+            if (own < 0 || queued_at != object_timer) {
+                addActorToTextOverlayRenderArray(func_global_asm_80710CA0, 0, 1);
+                queued_at = object_timer;
+            }
+        }
+    }
+}
+
+//@recomp: Rain / storm particles
+RECOMP_PATCH void func_global_asm_80711410(f32 arg0, s16 arg1, f32 arg2, s16 arg3, f32 arg4) {
+    int own = coop_wx_get_owner();
+    if (own < 0 && coop_wx_two()) {
+        if (current_map == MAP_DK_ISLES_OVERWORLD) {
+            // K. Rool's ship rain (set by the skybox manager): one batch per Kong, with his own intensity (rate = 4 f, angle = 30 f)
+            int p;
+            for (p = 0; p < 2; p++) {
+                f32 f = coop_ship_f(p);
+                if (f > 0.0f) {
+                    coop_rain_spawn(p, f * 4.0f, (s16) (f * 30.0f), arg2, arg3, arg4);
+                }
+            }
+            return;
+        }
+        own = 0; // other weather started by the map scripts only reacts to P1 (they read his position): it belongs to him
+    }
+    coop_rain_spawn(own, arg0, arg1, arg2, arg3, arg4);
 }
 
 //@recomp Reposition where items go when they fly to the HUD.
@@ -2107,6 +2277,65 @@ extern void set_sprite_interpolation_lockdown(s32 value);
 extern Gfx *simple_set_model_matrix(Gfx *dl, u8 *pushed, s32 id, s32 sub_id);
 extern Gfx *simple_pop_model_matrix(Gfx *dl, u8 pushed);
 
+extern void *coop_pause_half(int *rect, f32 xk);
+extern int coop_pause_half_on(void);
+extern void coop_pause_set_other(int on);
+extern Gfx *coop_pause_half_end(Gfx *dl);
+extern Gfx *func_global_asm_80703374(Gfx *dl, u8 r, u8 g, u8 b, u8 a);
+// Pause menu set-up of every piece of the menu; in co-op it is drawn in the half of the screen of the player who paused
+RECOMP_PATCH Gfx *func_global_asm_806A921C(Gfx *dl) {
+    int r[4];
+    void *half = coop_pause_half(r, 1.0f);
+    gSPDisplayList(dl++, &D_1000118);
+    if (half != NULL) {
+        gSPSegment(dl++, 0x02, osVirtualToPhysical(half));
+    }
+    gSPMatrix(dl++, &D_2000180, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+    gSPMatrix(dl++, &D_20000C0, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    if (half != NULL) {
+        gDPPipeSync(dl++);
+        gDPSetScissorFrac(dl++, G_SC_NON_INTERLACE, r[0] * 4.0f, r[1] * 4.0f, r[2] * 4.0f, r[3] * 4.0f);
+    }
+    gDPPipeSync(dl++);
+    gDPSetPrimColor(dl++, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF);
+    gDPSetCombineMode(dl++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+    return dl;
+}
+
+extern u8 D_global_asm_807505F8[2];
+// "Try again" style dialogs of the pause menu: same as the original, drawn in the pauser's half in co-op
+RECOMP_PATCH Gfx *func_global_asm_806ACA88(Gfx *dl, Actor *arg1) {
+    char sp40[40];
+
+    arg1->shadow_opacity += MIN(8, 0xFF - arg1->shadow_opacity);
+    dl = func_global_asm_80703374(dl, 0, 0, 0, MIN(0x7F, arg1->shadow_opacity));
+    dl = func_global_asm_806A921C(dl);
+    gDPSetCombineLERP(dl++, 0, 0, 0, TEXEL0, TEXEL0, 0, PRIMITIVE, 0, 0, 0, 0, TEXEL0, TEXEL0, 0, PRIMITIVE, 0);
+    gDPSetPrimColor(dl++, 0, 0, 0xFF, 0xFF, 0xFF, arg1->shadow_opacity);
+    dl = printStyledText(dl, 1, 0x168, 0x104, D_global_asm_807FC7E0[0], 1);
+    _sprintf(sp40, "q %s", D_global_asm_807FC7E0[1]);
+    dl = printStyledText(dl, 1, 0x208, 0x190, sp40, 1);
+    _sprintf(sp40, "b %s", D_global_asm_807FC7E0[2]);
+    dl = printStyledText(dl, 1, 0x208, 0x21C, sp40, 1);
+    return coop_pause_half_end(dl);
+}
+
+RECOMP_PATCH Gfx *func_global_asm_806ACF10(Gfx *dl, Actor *arg1) {
+    u8 controlStateProgressIsZero;
+    u8 shade;
+
+    dl = func_global_asm_806A921C(dl);
+    controlStateProgressIsZero = arg1->control_state_progress == 0;
+    shade = D_global_asm_807505F8[controlStateProgressIsZero];
+    gDPSetPrimColor(dl++, 0, 0, shade, shade, shade, 0xFF);
+    dl = printText(dl, 640, 440, 0.7f, D_global_asm_807FC7E0[0]);
+    shade = D_global_asm_807505F8[1 - controlStateProgressIsZero];
+    gDPSetPrimColor(dl++, 0, 0, shade, shade, shade, 0xFF);
+    dl = printText(dl, 640, 520, 0.7f, D_global_asm_807FC7E0[3]);
+    return coop_pause_half_end(dl);
+}
+
+extern void coop_pause_persona(int);
 // @recomp: Pause Menu Text renderer
 RECOMP_PATCH Gfx* func_global_asm_806A92B4(Gfx *dl, Actor *arg1) {
     u8 sp160[0x40];
@@ -2148,6 +2377,7 @@ RECOMP_PATCH Gfx* func_global_asm_806A92B4(Gfx *dl, Actor *arg1) {
     u8 update_alignment;
     u8 pushed_matrix_group;
 
+    coop_pause_persona(1); // co-op: the menu shows the data of the player who paused
     dl_copy = dl;
     sp15C = arg1->AAD_as_array[0];
     player = &D_global_asm_807FC950[0];
@@ -2168,7 +2398,9 @@ RECOMP_PATCH Gfx* func_global_asm_806A92B4(Gfx *dl, Actor *arg1) {
                 y = (temp_v0_2->unkA * 4) + (s32)(var_f0 * temp_v0_2->unk4) + (temp_v0_2->unkE * 4);
                 y += (sp15C->unkC[j] * 4);
                 update_alignment = FALSE;
-                if (x > (200 * 4)) {
+                if (coop_pause_half_on()) {
+                    // reduced menu: no alignment to the screen edges
+                } else if (x > (200 * 4)) {
                     dl = alignHUD(dl, ALIGN_RIGHT);
                     update_alignment = TRUE;
                 } else if (x < (120 * 4)) {
@@ -2336,7 +2568,22 @@ RECOMP_PATCH Gfx* func_global_asm_806A92B4(Gfx *dl, Actor *arg1) {
         dl = func_global_asm_806AA09C(0x280, 0x33C, D_global_asm_807FC828[D_global_asm_807FC818[D_global_asm_807FC80C]], D_global_asm_8075056C[D_global_asm_807FC818[D_global_asm_807FC80C]], dl, 1, var_f2);
         break;
     }
+    if (coop_pause_half_on()) {
+        // co-op: "EN PAUSE" in the middle of the half of the player who did not pause
+        coop_pause_set_other(1);
+        dl = func_global_asm_806A921C(dl);
+        coop_pause_set_other(0);
+        gDPSetPrimColor(dl++, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF);
+        {
+            // original (English) game: "PAUSED"; with the French translation mod (first menu entry "RETOUR"): "EN PAUSE"
+            u8 *lbl = (u8 *)D_global_asm_807FC7E0[0];
+            int french = lbl != NULL && (lbl[0] & 0xDF) == 'R' && (lbl[1] & 0xDF) == 'E' && (lbl[2] & 0xDF) == 'T' && (lbl[3] & 0xDF) == 'O';
+            dl = printText(dl, 0x280, 0x1C0, 0.9f, french ? (u8 *)"EN PAUSE" : (u8 *)"PAUSED");
+        }
+    }
+    dl = coop_pause_half_end(dl);
     gSPEndDisplayList(dl++);
+    coop_pause_persona(0);
     return dl_copy;
 }
 
@@ -3595,6 +3842,19 @@ RECOMP_PATCH void func_global_asm_806F833C(s32 arg0) {
             }
             if (playerCount == 2 && cc_number_of_players == 1) {
                 // @coop: lay the HUD out in this player's half of the screen
+                // Co-op layout (same for the pickups and for the "show my HUD" button): one fixed place per item.
+                // Left: Kong bananas, coins, crystals, film. Right: instrument, oranges, normal ammo, homing ammo.
+                // The golden bananas (items 8/9) are shown at the bottom centre.
+                switch (HUDItemIndex) {
+                    case 1: playerHUD[HUDItemIndex].screen_x = 30;  playerHUD[HUDItemIndex].screen_y = 78;  break;
+                    case 5: playerHUD[HUDItemIndex].screen_x = 30;  playerHUD[HUDItemIndex].screen_y = 118; break;
+                    case 6: playerHUD[HUDItemIndex].screen_x = 30;  playerHUD[HUDItemIndex].screen_y = 158; break;
+                    case 7: playerHUD[HUDItemIndex].screen_x = 290; playerHUD[HUDItemIndex].screen_y = 38;  break;
+                    case 4: playerHUD[HUDItemIndex].screen_x = 290; playerHUD[HUDItemIndex].screen_y = 78;  break;
+                    case 2: playerHUD[HUDItemIndex].screen_x = 290; playerHUD[HUDItemIndex].screen_y = 118; break;
+                    case 3: playerHUD[HUDItemIndex].screen_x = 290; playerHUD[HUDItemIndex].screen_y = 158; break;
+                    case 9: playerHUD[HUDItemIndex].screen_x = 140; break;
+                }
                 playerHUD[HUDItemIndex].screen_y = (s32)(playerHUD[HUDItemIndex].screen_y * COOP_HUD_POS_Y) + (playerIndex ? 120 : 0);
             }
             playerHUD[HUDItemIndex].unk_2d = var_s7;
@@ -3619,6 +3879,136 @@ extern Gfx *func_global_asm_806FA7BC(s32, Gfx *);
 extern Gfx *func_global_asm_806FA9C0(s32, Gfx *);
 extern void func_global_asm_806F9518(s32);
 void func_global_asm_806F8BC4(s32 HUDItemIndex, u8 arg1, s32 arg2);
+
+// co-op: HUD items saved while a HUD is hidden during a full-screen scene (see func_global_asm_806FAB20)
+static u16 coop_hs_mask[2] = {0, 0};
+static u8 coop_hs_arg[2][15];
+static u8 coop_hs_hidden[2] = {0, 0};
+static s32 coop_hs_map[2] = {-1, -1};
+
+// Direction the counters of a HUD item slide in from (original: items 0/13/14 from the left, 9/10/12 from below, the others
+// from the right). Same as the original, except that an item that sits on the LEFT of the screen slides in from the left:
+// the "show my HUD" display moves some items (coins, crystals, film) to the left column.
+typedef struct {
+    f32 unk0;
+    f32 unk4;
+    f32 unk8;
+    s32 unkC;
+} CoopSlideCounter;
+RECOMP_PATCH void func_global_asm_806F96CC(GlobalASMStruct71 *counter_, u32 arg1) {
+    CoopSlideCounter *arg0 = (CoopSlideCounter *)counter_; // the game uses these fields as floats here
+    s32 var_v0 = 0;
+    s32 var_v1 = 0;
+    arg0->unkC = 0;
+    switch (arg1) {
+        case 0:
+        case 13:
+        case 14:
+            var_v0 = -1;
+            break;
+        case 9:
+        case 10:
+        case 12:
+            var_v1 = 1;
+            break;
+        default:
+            var_v0 = 1;
+            if (arg1 < 15 && D_global_asm_80754280 != NULL && D_global_asm_80754280->hud_item[arg1].screen_x < 160) {
+                var_v0 = -1;
+            }
+            break;
+    }
+    arg0->unk4 = var_v0 * 0x30;
+    arg0->unk8 = var_v1 * 0x30;
+}
+
+// ---- Story co-op: "show my HUD" button (D-pad up) ----
+// Pressing D-pad up shows the essential HUD items of that player for COOP_PK_TICKS draws (items only if unlocked).
+#define COOP_PK_TICKS 60
+extern u8 D_global_asm_807FD610[]; // controller state, 0x34 bytes per player: +0x2A = held buttons
+void coop_hud_hide_item(int item, int player);
+static u16 coop_pk_mask[2] = {0, 0};
+static s16 coop_pk_left[2] = {0, 0};
+static u8 coop_pk_prev[2] = {0, 0};
+static s32 coop_pk_map = -1;
+
+
+// base: first HUD array (coop_hud_hide_item selects the player's HUD itself from it)
+static void coop_pk_stop(int k, PlayerHUD *base) {
+    int it;
+    PlayerHUD *saved = D_global_asm_80754280;
+    D_global_asm_80754280 = base;
+    for (it = 0; it < 0xF; it++) {
+        if (coop_pk_mask[k] & (1 << it)) {
+            coop_hud_hide_item(it, k);
+        }
+    }
+    D_global_asm_80754280 = saved;
+    coop_pk_mask[k] = 0;
+    coop_pk_left[k] = 0;
+}
+
+// Cancels the display of both players (pause, ...)
+void coop_hud_peek_cancel(void) {
+    int k;
+    if (coop_hud_n != 2) return;
+    for (k = 0; k < 2; k++) {
+        if (coop_pk_left[k] > 0) coop_pk_stop(k, D_global_asm_80754280);
+    }
+}
+
+static void coop_pk_update(int k, PlayerHUD *base) {
+    u16 held = *(u16 *)(D_global_asm_807FD610 + k * 0x34 + 0x2A);
+    int up = (held & 0x0800) != 0;
+    int edge = up && !coop_pk_prev[k];
+    coop_pk_prev[k] = (u8)up;
+    if (coop_pk_left[k] > 0 && coop_pk_map != (s32)current_map) {
+        coop_pk_mask[k] = 0; // map change: the HUD was freed
+        coop_pk_left[k] = 0;
+    }
+    if (edge && character_change_array[k].playerPointer) {
+        if (coop_pk_left[k] > 0) {
+            coop_pk_left[k] = COOP_PK_TICKS;
+        } else {
+            int kong = func_global_asm_806C8DE0(k);
+            s32 lvl = getLevelIndex(current_map, 1);
+            CharacterProgress *cp = &D_global_asm_807FC950[0].character_progress[kong];
+            PlayerHUD *saved = D_global_asm_80754280;
+            u16 m = 0;
+            int it;
+            if (lvl >= 9) lvl = 7;
+            if (lvl != 7 && isFlagSet(0x18B, 0)) m |= 1 << 0;                      // Kong bananas
+            if (lvl != 7) m |= (1 << 9) | (1 << 10);                                 // golden bananas of the world (item 9) + medal
+            if (isFlagSet(0x18C, 0)) m |= 1 << 1;                                    // coins
+            if (cp->weapon != 0) m |= 1 << 2;                                        // normal ammo
+            if (cp->weapon & 2) m |= 1 << 3;                                         // homing ammo (unlocked)
+            if (isFlagSet(0x184, 0)) m |= 1 << 4;                                    // oranges
+            if (func_global_asm_806F6E58((s16)kong) != 0) m |= 1 << 5;               // crystals
+            if (cp->instrument & 1) m |= 1 << 7;                                     // instrument
+            if (isFlagSet(0x179, 0)) m |= 1 << 6;                                    // film
+            if (m & (1 << 9)) {
+                // item 9 normally shows the total of the whole game: here the golden bananas of ALL Kongs in this world
+                int c, total = 0;
+                for (c = 0; c < 5; c++) total += D_global_asm_807FC950[0].character_progress[c].golden_bananas[lvl];
+                base[k].hud_item[9].hud_count = (u16)total;
+            }
+            D_global_asm_80754280 = base + k;
+            coop_hud_drawing = 1; // the HUD is selected here
+            for (it = 0; it < 0xF; it++) {
+                if (m & (1 << it)) {
+                    func_global_asm_806F8BC4(it, 1, 0);
+                }
+            }
+            coop_hud_drawing = 0;
+            D_global_asm_80754280 = saved;
+            coop_pk_mask[k] = m;
+            coop_pk_map = (s32)current_map;
+            coop_pk_left[k] = COOP_PK_TICKS;
+        }
+    } else if (coop_pk_left[k] > 0) {
+        if (--coop_pk_left[k] == 0) coop_pk_stop(k, base);
+    }
+}
 
 RECOMP_PATCH Gfx *func_global_asm_806FAB20(Gfx *dl) {
     s32 p_first, p_last;
@@ -3654,41 +4044,54 @@ RECOMP_PATCH Gfx *func_global_asm_806FAB20(Gfx *dl) {
         // a hidden HUD are freed (their state saved) and shown again when the HUD comes back.
         extern int coop_fullscreen_query(void);
         extern int coop_feeder_query(void);
-        static u16 saved_mask[2] = {0, 0};
-        static u8 saved_arg[2][15];
-        static u8 hidden[2] = {0, 0};
-        static s32 saved_map[2] = {-1, -1};
         int fd = -2, k;
         p_first = 0; p_last = n;
         if (n == 2) {
-            if (coop_fullscreen_query() >= 0) fd = coop_feeder_query(); // -1: nobody shown, 0/1: that HUD only
+            { extern int coop_transition_query(void); if (coop_transition_query()) fd = -1; }
+            if (fd == -2 && coop_fullscreen_query() >= 0) {
+                fd = coop_feeder_query(); // -1: nobody shown, 0/1: that HUD only
+                if (fd == -1) {
+                    // golden banana dance (full screen): the HUD of the Kong shown full screen stays visible while its golden
+                    // banana display (items 8 / 9) is up, so the heads and the +1 are seen during the dance
+                    int fs_ = coop_fullscreen_query();
+                    if (fs_ >= 0 && fs_ < 2 && (base[fs_].hud_item[8].hud_state != 0 || base[fs_].hud_item[9].hud_state != 0)) {
+                        fd = fs_;
+                    }
+                }
+            }
             for (k = 0; k < 2; k++) {
                 int shown = (fd == -2) || (fd == k);
                 D_global_asm_80754280 = base + k;
-                if (!shown && !hidden[k]) {
+                if (!shown && !coop_hs_hidden[k]) {
                     int it;
-                    saved_mask[k] = 0;
-                    saved_map[k] = (s32)current_map;
+                    coop_hs_mask[k] = 0;
+                    coop_hs_map[k] = (s32)current_map;
+                    u16 skip = coop_pk_mask[k];
+                    if (coop_pk_left[k] > 0) coop_pk_stop(k, base); // "show my HUD" is cancelled: its items must not come back frozen
                     for (it = 0; it < 0xF; it++) {
                         if (base[k].hud_item[it].hud_state != 0) {
-                            saved_mask[k] |= (1 << it);
-                            saved_arg[k][it] = base[k].hud_item[it].unk_24;
+                            if (!(skip & (1 << it))) {
+                                coop_hs_mask[k] |= (1 << it);
+                                coop_hs_arg[k][it] = base[k].hud_item[it].unk_24;
+                            }
                             func_global_asm_806F9518(it);
                         }
                     }
-                    hidden[k] = 1;
-                } else if (shown && hidden[k]) {
+                    coop_hs_hidden[k] = 1;
+                } else if (shown && coop_hs_hidden[k]) {
                     int it;
                     coop_hud_drawing = 1;
                     for (it = 0; it < 0xF; it++) {
                         // items saved in another map are not restored (the map change already reset the HUD: they came back for good)
-                        if (saved_map[k] == (s32)current_map && (saved_mask[k] & (1 << it)) && base[k].hud_item[it].hud_state == 0) {
-                            func_global_asm_806F8BC4(it, saved_arg[k][it], 0);
+                        if (coop_hs_map[k] == (s32)current_map && (coop_hs_mask[k] & (1 << it)) && base[k].hud_item[it].hud_state == 0) {
+                            func_global_asm_806F8BC4(it, coop_hs_arg[k][it], 0);
                         }
                     }
                     coop_hud_drawing = 0;
-                    hidden[k] = 0;
+                    coop_hs_hidden[k] = 0;
                 }
+                if (shown) coop_pk_update(k, base);
+                D_global_asm_80754280 = base + k;
             }
             D_global_asm_80754280 = base;
             if (fd == -1) {
@@ -3722,6 +4125,29 @@ RECOMP_PATCH Gfx *func_global_asm_806FAB20(Gfx *dl) {
     coop_hud_drawing = 0;
     coop_hud_p = 0;
     return dl;
+}
+
+// Item 9 (golden bananas, bottom centre). Original: total of the whole game. Co-op: golden bananas of ALL Kongs in the current world.
+RECOMP_PATCH void func_global_asm_806F8278(s32 playerIndex) {
+    s32 total = 0;
+    s32 kong;
+    if (coop_hud_on()) {
+        s32 lvl = getLevelIndex(current_map, 1);
+        if (lvl < 14) {
+            for (kong = 0; kong < 5; kong++) {
+                total += D_global_asm_807FC950[0].character_progress[kong].golden_bananas[lvl];
+            }
+        }
+    } else {
+        PlayerProgress *pp = &D_global_asm_807FC950[playerIndex];
+        s32 level;
+        for (level = 0; level < 14; level++) {
+            for (kong = 0; kong < 5; kong++) {
+                total += pp->character_progress[kong].golden_bananas[level];
+            }
+        }
+    }
+    D_global_asm_80754280->hud_item[(playerIndex * 0xF) + 9].hud_count = total;
 }
 
 // Make an item of the HUD appear: the HUD of the player who triggered it (see coop_hud_owner)
@@ -3781,6 +4207,9 @@ void coop_hud_hide_item(int item, int player) {
     }
     func_global_asm_806F8D58(item, 0);
     D_global_asm_80754280 = base_;
+    if (player >= 0 && player < 2 && item >= 0 && item < 15 && coop_hs_hidden[player]) {
+        coop_hs_mask[player] &= ~(1 << item); // that HUD is freed right now: it must not come back when the scene ends
+    }
 }
 
 // ---- Story co-op: banana counter of the Troff 'n' Scoff room (HUD item 0xD) ----
@@ -3828,4 +4257,118 @@ RECOMP_PATCH void func_global_asm_806F95C8(void) {
         }
     }
     D_global_asm_80754280 = base;
+}
+
+// ---- Story co-op: choice of the two Kongs on the stats screen of the file menu ----
+// The stats screen (state 3 of the menu actor) shows the five Kong heads. In co-op each player gets a cursor ("J1" orange, "J2" blue) under the heads of the
+// Kongs that are unlocked, moved with the D-pad (left / right) of his own controller; P1's A button launches the game and the two positions are read then
+// (patches_main.c: coop_menu_*, applied at the first co-op spawn). Without co-op the screen is exactly the original one.
+extern void coop_menu_reset(void);
+extern int coop_menu_get(int p);
+extern void coop_menu_move(const s8 *unlocked);
+extern void coop_menu_commit(void);
+extern s8 D_menu_80033804[];
+extern s8 D_menu_80033F48;
+extern f32 D_menu_80033F4C;
+extern s8 D_menu_80033F51;
+extern s32 D_menu_8003380C;
+extern s32 D_menu_80033810;
+extern s32 D_menu_80033814;
+extern u8 **label_string_pointer_array;
+extern s32 func_menu_800317E8(MenuAdditionalActorData *arg0, f32 arg1, f32 arg2, f32 *arg3, f32 *arg4, s32 arg5, s8 arg6, f32 arg7);
+extern Gfx *func_menu_8002FB88(Gfx *arg0, s32 arg1, f32 arg2, f32 arg3, f32 arg4);
+extern void func_menu_8002FC1C(Actor *arg0, MenuAdditionalActorData *arg1, s32 arg2);
+extern void func_global_asm_8060AA58(u8 arg0);
+extern void func_global_asm_807144B8(s32 arg0);
+#define COOP_MENU_LABEL_DY 2.0f // vertical distance between a Kong head and the cursor labels (menu units, as the head position)
+#define COOP_MENU_LABEL_STYLED 0 // 1: printStyledText (big, centred); 0: printText at scale 0.6 (same font and colours, small): the size wanted
+#define COOP_MENU_J1_DX (-85)    // horizontal offset (1/4 pixel units) of the J1 label from the centre of the head
+#define COOP_MENU_J2_DX (-5)       // same for J2
+
+// Stats screen update (A starts the game, B goes back): the original plus the cursors.
+RECOMP_PATCH void func_menu_80029114(Actor *arg0, s32 arg1) {
+    MenuAdditionalActorData *MaaD = arg0->MaaD;
+    int coop = recomp_get_coop_enabled();
+
+    if ((MaaD->unk0 == 0.0f) && (MaaD->unk4 == 0.0f)) {
+        if (coop) coop_menu_move(D_menu_80033804);
+        if (arg1 & 1) {
+            if (coop) coop_menu_commit();
+            func_global_asm_8060AA58(1);
+            func_global_asm_807144B8(D_menu_80033F48);
+        } else if ((arg1 & 2) != 0) {
+            if (coop) coop_menu_reset();
+            playSound(0x2C9, 0x7FFF, 63.0f, 1.0f, 0, 0);
+            MaaD->unk16 = 0;
+            MaaD->unk13 = 2;
+        }
+    }
+    func_menu_8002FC1C(arg0, MaaD, 1);
+}
+
+// Stats screen drawing: C version of the original (the Kong heads, the three statistics, the clock and the title) plus the co-op cursors.
+RECOMP_PATCH Gfx *func_menu_800291CC(Actor *arg0, Gfx *dl) {
+    MenuAdditionalActorData *MaaD = arg0->MaaD;
+    f32 var_f20 = 66.0f;
+    f32 temp_f22_2 = 3.0f;
+    f32 spD0, spCC, temp_f20, temp_f24, temp_f2;
+    s16 temp_f22, temp_s0;
+    char buf[0x40];
+    int i;
+
+    for (i = 0; i < 5; i++) {
+        func_menu_800317E8(MaaD, var_f20, 85.0f, &spD0, &spCC, 4, 0, 1.5f);
+        if (D_menu_80033804[i]) {
+            dl = func_menu_8002FB88(dl, i, spD0, spCC, temp_f22_2 * 0.85);
+        } else {
+            dl = func_menu_8002FB88(dl, i | 0x80, spD0, spCC, temp_f22_2);
+        }
+        var_f20 += 55.0f;
+    }
+    if (recomp_get_coop_enabled()) {
+        int p;
+        for (p = 0; p < 2; p++) {
+            int k = coop_menu_get(p);
+            f32 hx, hy;
+            func_menu_800317E8(MaaD, 66.0f + 55.0f * k, 85.0f + COOP_MENU_LABEL_DY, &hx, &hy, 4, 0, 1.5f);
+            gDPSetPrimColor(dl++, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF); // (the font keeps its own colours)
+#if COOP_MENU_LABEL_STYLED
+            dl = printStyledText(dl, 1, (s16)(hx * 4.0f + (p == 0 ? COOP_MENU_J1_DX : COOP_MENU_J2_DX)), (s16)(hy * 4.0f), (u8 *)(p == 0 ? "J1" : "J2"), 0x81U);
+#else
+            dl = printText(dl, (s16)(hx * 4.0f + (p == 0 ? COOP_MENU_J1_DX : COOP_MENU_J2_DX)), (s16)(hy * 4.0f), 0.55f, (u8 *)(p == 0 ? "J1" : "J2"));
+#endif
+        }
+    }
+    gDPSetPrimColor(dl++, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF);
+    func_menu_800317E8(MaaD, 160.0f, 180.0f, &spD0, &spCC, 5, 1, 2.0f);
+    D_menu_80033F4C = spCC * 4.0f;
+    temp_s0 = (s16)((s32)D_menu_80033F4C - 0x140);
+    _sprintf(buf, "%d%%", D_menu_80033F51);
+    dl = printStyledText(dl, 1, 0x280, temp_s0, (u8 *)buf, 0x81U);
+    temp_s0 += 0x8C;
+    _sprintf(buf, "%03d", D_menu_8003380C);
+    dl = printStyledText(dl, 1, 0x280, temp_s0, (u8 *)buf, 0x81U);
+    temp_s0 += 0x8C;
+    _sprintf(buf, "%03d:%02d", D_menu_80033810, D_menu_80033814);
+    dl = printStyledText(dl, 1, 0x280, temp_s0, (u8 *)buf, 0x81U);
+    temp_f2 = func_global_asm_80612794((object_timer * 0x78) & 0xFFF);
+    temp_f2 = (temp_f2 * 0.1f) + 0.5f;
+    temp_f22 = (s16)(temp_s0 + 40.0f);
+    spD0 = 85.0f * 4.0f;
+    temp_f20 = 0.5f * 4.0f;
+    spCC = ((temp_f22 * 0.25f) + (32.0f * temp_f2)) * 4.0f;
+    dl = displayImage(dl, 0xA1U, 3, 0, 0x40, 0x40, spD0, spCC, temp_f20, -(temp_f2 * 4.0f), 0, 0.0f);
+    gDPPipeSync(dl++);
+    spCC = temp_f22;
+    temp_f20 = temp_f20 * 0.75f;
+    temp_f24 = -temp_f20;
+    spD0 = 340.0f;
+    dl = displayImage(dl, 0xA0U, 3, 0, 0x20, 0x20, 340.0f, spCC, temp_f20, temp_f24 * 0.5f, object_timer % 360U, 0.0f);
+    gDPPipeSync(dl++);
+    dl = displayImage(dl, 0xA0U, 3, 0, 0x20, 0x20, spD0, spCC, temp_f20, temp_f24, (object_timer * 0xC) % 360U, 0.0f);
+    gDPPipeSync(dl++);
+    gDPSetPrimColor(dl++, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF);
+    func_menu_800317E8(MaaD, 160.0f, 15.0f, &spD0, &spCC, 5, 1, 0.3f);
+    _sprintf(buf, "%s %d", label_string_pointer_array[7], D_menu_80033F48 + 1);
+    return printText(dl, spD0 * 4.0f, spCC * 4.0f, 0.6f, (u8 *)buf);
 }

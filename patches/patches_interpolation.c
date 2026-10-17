@@ -319,11 +319,16 @@ RECOMP_PATCH void func_global_asm_8061DBD4(Actor* arg0, f32* arg1, f32* arg2, f3
                                             params[1].vals32,
                                             params[2].vals32);
                                     } else {
+                                        extern Actor *coop_scene_speaker(s32 cmd, s32 a1);
+                                        Actor *sv_g = gPlayerPointer;
+                                        Actor *sp_ = coop_scene_speaker(params[0].vals32, params[1].vals32);
+                                        if (sp_ != NULL) gPlayerPointer = sp_;
                                         func_global_asm_80627F04(
                                             params[0].vals32,
                                             params[1].vals32,
                                             params[2].vals32,
                                             D_global_asm_807F5CF2);
+                                        gPlayerPointer = sv_g;
                                     }
                                     func_global_asm_8061D898();
                                     D_global_asm_807F5CEC = 0;
@@ -513,6 +518,8 @@ extern void func_global_asm_8068A350(Actor *arg0, s32 arg1, s32 arg2);
 
 extern int coop_colour_active(void);
 extern int coop_colour_index(int player);
+extern int coop_mg_colour(void);
+static Actor *coop_mg_col_actor = NULL;
 static s32 coop_col_applied[2] = {0, 0}; // last colour index applied to each player's Kong
 
 // @recomp: LOD Handler
@@ -546,6 +553,13 @@ RECOMP_PATCH void func_global_asm_8068A508(void) {
                                 PaaD = temp_s0->PaaD;
                                 if (D_global_asm_807552F4[PaaD->unk1A4] >= 0) {
                                     func_global_asm_8068A404(temp_s0, sp80, D_global_asm_807552F4[PaaD->unk1A4]);
+                                }
+                            } else if ((temp_s0->interactable & 1) && coop_mg_colour() > 0) {
+                                // bonus barrel played by P2: his colour scheme
+                                static int mg_tick_ = 0;
+                                if (coop_mg_col_actor != temp_s0 || (++mg_tick_ % 30) == 0) {
+                                    func_global_asm_8068A404(temp_s0, sp80, coop_mg_colour());
+                                    coop_mg_col_actor = temp_s0;
                                 }
                             } else if ((temp_s0->interactable & 1) && coop_colour_active()) {
                                 // Story co-op: a Kong gets the Battle mode's 2nd colour scheme only if the other player has the
@@ -1420,12 +1434,20 @@ extern u8 D_global_asm_80770DC9;
 extern u8 current_character_index[];
 extern u16 D_global_asm_807FBB34;
 
+extern int coop_cs_skip(Actor *a);
+extern int coop_cs_notify(int idx);
 RECOMP_PATCH s32 playCutscene(Actor *arg0, s16 arg1, u8 arg2) {
     u16 sp26;
     s32 i;
     Actor *ac;
 
     sp26 = 0;
+    { extern void coop_door_pre(int, Actor *); coop_door_pre((int)arg1, arg0); }
+    { extern void coop_cs_pre(int, Actor *); coop_cs_pre((int)arg1, arg0); }
+    if (coop_cs_notify((int)arg1) && arg0 == NULL && character_change_array[1].playerPointer != NULL) {
+        arg0 = character_change_array[1].playerPointer; // co-op: switch / door scene seen from the Kong who shot (P2)
+    }
+    if (coop_cs_skip(arg0)) return 0; // co-op: golden banana dance of both Kongs, only the picker's scene is played
     if ((is_cutscene_active == 1) && (D_global_asm_807F5CF4 & 0x80)) {
         return 0;
     }
@@ -1544,4 +1566,42 @@ RECOMP_PATCH void func_global_asm_806F386C(u8 arg0, Actor *arg1, Actor *arg2, s1
         }
         recomp_on_autowalk();
     }
+}
+
+// @coop: delayed cutscene commands (func_global_asm_8060098C schedules them). A text command spoken by "the player" in the Klumsy
+// scene, when P2 walked in, is run with P2 as "the player" so that the speech bubble comes out of his head.
+typedef struct CoopDelayedCS CoopDelayedCS;
+struct CoopDelayedCS {
+    CoopDelayedCS *next;
+    s32 (*function)(s32 a, s32 b, s32 c);
+    s32 action_frame;
+    s32 args[3];
+};
+extern CoopDelayedCS *D_global_asm_807452A0;
+extern u32 D_global_asm_8076A068[];
+extern Actor *coop_scene_speaker(s32 cmd, s32 a1);
+extern void func_global_asm_8061134C(void *ptr); // (free)
+
+RECOMP_PATCH void func_global_asm_80600B10(void) {
+    s32 var_s1;
+    CoopDelayedCS *var_s0;
+    CoopDelayedCS *nx_;
+
+    var_s0 = D_global_asm_807452A0;
+    var_s1 = 0;
+    while (var_s0 != NULL && !var_s1) {
+        if (D_global_asm_8076A068[0] >= (u32)(var_s0->action_frame & 0x7FFFFFFF)) {
+            Actor *sv_g = gPlayerPointer;
+            Actor *sp_ = ((void *)var_s0->function == (void *)func_global_asm_80627F04) ? coop_scene_speaker(var_s0->args[0], var_s0->args[1]) : NULL;
+            if (sp_ != NULL) gPlayerPointer = sp_;
+            var_s0->function(var_s0->args[0], var_s0->args[1], var_s0->args[2]);
+            gPlayerPointer = sv_g;
+            nx_ = var_s0->next; // (read after the call: it may have scheduled something right after this entry)
+            func_global_asm_8061134C(var_s0);
+            var_s0 = nx_;
+        } else {
+            var_s1 = 1;
+        }
+    }
+    D_global_asm_807452A0 = var_s0;
 }

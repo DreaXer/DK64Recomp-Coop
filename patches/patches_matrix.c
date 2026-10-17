@@ -257,6 +257,7 @@ typedef struct Struct80636FFC {
 } Struct80636FFC;
 
 extern f32 recomp_filter_draw(f32 value, f32 ratio);
+extern u32 object_timer;
 extern f32 propDrawFilter(s32 prop_type);
 
 // @recomp: Model 2 Matrix stuff
@@ -369,20 +370,43 @@ RECOMP_PATCH Gfx* func_global_asm_80636FFC(Struct80636FFC* arg0, Gfx* dl, s32 ar
             sp92 = D_global_asm_807F6000[temp_v0_3].unk7C->unk64;
         } else {
             func_global_asm_8065CE4C(arg0->unk0, arg0->unk4, arg0->unk8, recomp_filter_draw(arg0->unkC0, propDrawFilter(arg0->unkB4)), (s16) (s32) arg0->unkB4, &sp92);
-            if (arg0->unkB6 != -1) {
+            // @recomp co-op: the smoothed fade (unk62/unk64) is shared by the viewports and only updated once per frame, so the second
+            // viewport used the first one's value (and overwrote its target): J2 saw J1's shadows. The second viewport uses its raw value.
+            if (cc_player_index == 0 && arg0->unkB6 != -1) {
                 if ((D_global_asm_807F6000[temp_v0_3].unk7C != NULL) && (D_global_asm_80750AB4 == 1)) {
                     D_global_asm_807F6000[temp_v0_3].unk7C->unk62 = sp92;
                 }
             }
-            if (arg0->unkB6 != -1) {
+            if (cc_player_index == 0 && arg0->unkB6 != -1) {
                 if (D_global_asm_807F6000[temp_v0_3].unk7C != NULL) {
                     func_global_asm_8063E6B4(D_global_asm_807F6000[temp_v0_3].unk7C);
                 }
             }
-            if (arg0->unkB6 != -1) {
+            if (cc_player_index == 0 && arg0->unkB6 != -1) {
                 if ((D_global_asm_807F6000[temp_v0_3].unk7C != NULL) && (D_global_asm_80750AB4 == 1)) {
                     sp92 = D_global_asm_807F6000[temp_v0_3].unk7C->unk64;
                 }
+            } else if (cc_player_index == 1 && arg0->unkB6 != -1 && temp_v0_3 >= 0 && temp_v0_3 < 2048
+                       && D_global_asm_807F6000[temp_v0_3].unk7C != NULL && D_global_asm_80750AB4 == 1) {
+                // @recomp co-op: same smoothing as the first viewport, kept per prop for the second one
+                static s16 fade2[2048];
+                static u32 stamp2[2048];
+                s16 cur = fade2[temp_v0_3];
+                s16 step = D_global_asm_807F6000[temp_v0_3].unk7C->unk66;
+                if ((u32)(object_timer - stamp2[temp_v0_3]) > 2) {
+                    cur = sp92;
+                } else if (stamp2[temp_v0_3] != object_timer) {
+                    if (cur < sp92) {
+                        cur += step;
+                        if (cur > sp92) cur = sp92;
+                    } else {
+                        cur -= step;
+                        if (cur < sp92) cur = sp92;
+                    }
+                }
+                stamp2[temp_v0_3] = object_timer;
+                fade2[temp_v0_3] = cur;
+                sp92 = cur;
             }
         }
     } else {

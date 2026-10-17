@@ -72,3 +72,10 @@ gamecontrollerdb.txt
 # Just linux things
 build.log
 DK64Recompiled
+
+# Visual Studio / CMake build folder (Windows)
+build-vs/
+
+# Local developer files (not shared)
+build.ps1
+CLAUDE.md

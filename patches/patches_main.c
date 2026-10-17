@@ -277,8 +277,31 @@ extern u8 D_global_asm_807ECDF8; // controllers active in adventure mode (bitmas
 extern u8 D_global_asm_807ECD09; // controllers connected (bitmask)
 extern void func_global_asm_8060AA58(u8);
 
+// Shops and Cranky's lab (single-player maps entered from DK Isles): the Kong who goes in plays alone (persona, colour, pad, text), the other one stays out
+static int coop_is_shop(int m) { return m == MAP_FUNKYS_STORE || m == MAP_CANDYS_MUSIC_SHOP || m == MAP_SNIDES_HQ || m == MAP_CRANKYS_LAB; }
+// Crown battle arenas (all ten; only Japes tested): not a boss, each player keeps his own Kong
+static int coop_is_arena(int m) {
+    return m == MAP_BATTLE_ARENA_BEAVER_BRAWL || m == MAP_BATTLE_ARENA_KRITTER_KARNAGE || m == MAP_BATTLE_ARENA_ARENA_AMBUSH || m == MAP_BATTLE_ARENA_MORE_KRITTER_KARNAGE
+        || m == MAP_BATTLE_ARENA_FOREST_FRACAS || m == MAP_BATTLE_ARENA_BISH_BASH_BRAWL || m == MAP_BATTLE_ARENA_KAMIKAZE_KREMLINGS || m == MAP_BATTLE_ARENA_PLINTH_PANIC
+        || m == MAP_BATTLE_ARENA_PINNACLE_PALAVER || m == MAP_BATTLE_ARENA_SHOCKWAVE_SHOWDOWN;
+}
 static int coop_map_allowed(void) {
-    return current_map == MAP_JAPES || current_map == MAP_JAPES_LOBBY || current_map == MAP_TROFF_N_SCOFF || current_map == MAP_DK_ISLES_OVERWORLD || current_map == MAP_AZTEC || current_map == MAP_JAPES_ARMY_DILLO; // co-op maps
+    return current_map == MAP_TRAINING_GROUNDS || current_map == MAP_JAPES || current_map == MAP_JAPES_LOBBY || current_map == MAP_TROFF_N_SCOFF || current_map == MAP_DK_ISLES_OVERWORLD || current_map == MAP_AZTEC || current_map == MAP_JAPES_ARMY_DILLO || current_map == MAP_KLUMSY || coop_is_arena(current_map); // co-op maps
+}
+
+// Playable Kongs: 1 if the Kong (0 DK, 1 Diddy, 2 Lanky, 3 Tiny, 4 Chunky) is unlocked in the current save
+// (permanent flags of the "Kong unlocked" table, the ones shown as "?" on the Kong select screens when still locked).
+extern s32 D_global_asm_80744720[];
+extern u8 isFlagSet(s16 flagIndex, u8 flagType);
+int coop_kong_unlocked(int kong) {
+    if (kong < 0 || kong > 4) return 0;
+    return isFlagSet((s16)D_global_asm_80744720[kong], FLAG_TYPE_PERMANENT) ? 1 : 0;
+}
+// bitmask of the unlocked Kongs (bit 0 DK ... bit 4 Chunky)
+int coop_kongs_unlocked_mask(void) {
+    int k, m = 0;
+    for (k = 0; k < 5; k++) if (coop_kong_unlocked(k)) m |= 1 << k;
+    return m;
 }
 
 RECOMP_PATCH void func_global_asm_805FB944(u8 arg0) {
@@ -792,6 +815,11 @@ RECOMP_PATCH Gfx *func_global_asm_80655DD0(Gfx * dl, Struct80655DD0_arg1 * arg1,
     return dl;
 }
 
+extern int coop_wx_two(void);
+extern int coop_wx_range(int owner, int *top, int *bottom);
+extern f32 coop_ship_f(int p);
+static int coop_active_here(void);
+
 //@recomp: Water Screen Overlay
 RECOMP_PATCH Gfx *func_global_asm_80701CA0(Gfx *dl) {
     CameraPaad* camera_paad;
@@ -807,6 +835,37 @@ RECOMP_PATCH Gfx *func_global_asm_80701CA0(Gfx *dl) {
     spC3 = FALSE;
     var_fp = 0x64;
     spBA = FALSE;
+    if (current_map == MAP_DK_ISLES_OVERWORLD && coop_wx_two()) {
+        // @recomp co-op: darkening near K. Rool's ship, per Kong. The original dims the ambient light of the whole scene (one value
+        // for both views: see func_global_asm_80707980), so here it is a translucent black veil over the view of the Kong near the ship.
+        int p;
+        int veil = 0;
+        for (p = 0; p < 2; p++) {
+            f32 f = coop_ship_f(p);
+            int top, bot;
+            if (f > 0.0f && coop_wx_range(p, &top, &bot)) {
+                if (!veil) {
+                    gDPPipeSync(dl++);
+                    dl = func_global_asm_805FCFD8(dl);
+                    gDPSetScissor(dl++, G_SC_NON_INTERLACE, gScissorUpLX, gScissorUpLY, gScissorLowerRightX, gScissorLowerRightY);
+                    gDPSetRenderMode(dl++, G_RM_CLD_SURF, G_RM_CLD_SURF2);
+                    gDPSetCombineMode(dl++, G_CC_PRIMITIVE, G_CC_PRIMITIVE);
+                    gDPSetCycleType(dl++, G_CYC_1CYCLE);
+                    gSPMatrix(dl++, &D_2000080, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+                    gSPMatrix(dl++, &D_2000180, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+                    veil = 1;
+                }
+                gDPSetPrimColor(dl++, 0, 0, 0x00, 0x00, 0x00, (u8)(f * 0.6f * 255.0f));
+                gDPFillRectangle(dl++, character_change_array[p].unk270[0], top, character_change_array[p].unk270[2], bot);
+                gDPPipeSync(dl++);
+            }
+        }
+        if (veil) {
+            gSPMatrix(dl++, &D_2000000, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+            gSPMatrix(dl++, &D_2000200, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
+            gSPMatrix(dl++, &D_2000180, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+        }
+    }
     switch (current_map) {
         case MAP_GALLEON_MERMAID:
             spBA = TRUE;
@@ -822,8 +881,9 @@ RECOMP_PATCH Gfx *func_global_asm_80701CA0(Gfx *dl) {
             }
         default:
     block_12:
-            for (i = 0; i < cc_number_of_players; i++) {
-                if (character_change_array[i].does_player_exist) {
+            // @recomp co-op: the game has a single player slot, so also tint J2's view
+            for (i = 0; i < (coop_active_here() ? 2 : cc_number_of_players); i++) {
+                if (character_change_array[i].does_player_exist && character_change_array[i].playerPointer != NULL) {
                     player_aad = character_change_array[i].playerPointer->PaaD;
                     camera_paad = player_aad->unk104->CaaD;
                     if (spBA || (
@@ -2012,6 +2072,247 @@ extern void func_global_asm_80708BB8(CharacterChange2DC *);
 extern void func_global_asm_80709464(s32);
 extern void func_global_asm_806C80E4(void);
 
+// Kong played by P2, remembered across map loads (0xFF = none: first spawn after loading the game)
+static u8 coop_p2_kong_mem = 0xFF;
+// Training Grounds: P2 stays where he is while P1 visits Cranky's lab / a barrel (separate maps).
+// His position is saved when P1 leaves the map and given back (standing, idle) when the map is loaded again.
+static int coop_tg_free = 0;   // intro over / P2 no longer glued to P1
+// Bonus barrel (mini-game map = single player map): the Kong who entered the barrel plays it.
+static int coop_mg_pending = 0;  // P2 entered a barrel: the next single-player map is played by P2's Kong with controller 2
+static int coop_mg_swapped = 0;  // P2's persona (Kong, ammo, health...) currently sits in the player 0 slot
+static int coop_mg_col = 0;      // colour index of that Kong
+static int coop_mg_ret = 0;      // frames left during which the map scripts run for P2 (he comes back out of the barrel)
+static u32 coop_door_trig_t = 0; // frame (coop_gun_clock) at which the door trigger was set
+static int coop_door_trig = -1; // world door swirl running (both Kongs in state 135): player who walked into it
+static int coop_door_p2 = 0;    // that player was P2 when the map changed
+static int coop_door_hs = 0; // the door being used leads to / from Troff 'n' Scoff (Hott&Stroff)
+static s16 coop_door_ang; // angle of the exit
+static f32 coop_door_ex, coop_door_ez; // exit point of the map being entered (the door)
+extern f32 func_global_asm_80612794(s16);
+extern f32 func_global_asm_80612790(s16);
+static int coop_arena_was = 0, coop_arena_back = 0; // previous map was a crown arena / ticks left to put P2 beside P1 after the return
+static int coop_door_ret1 = 0;  // same for P1 (the other Kong is then the one kept beside the walker)
+static int coop_door_p1 = 0;
+#define COOP_ENTRY_CENTER 12.5f // the Kong who walks in is moved this far to the right of the exit point (the other one stays COOP_ENTRY_SIDE at his left)
+#define COOP_HS_AHEAD 50.0f // Hott&Stroff exit: distance in front of the door at which the other Kong is put (if he ends up behind the door, use a negative value)
+#define COOP_HS_TURN 0 // heading of the other Kong relative to the exit angle (0x800 = turned around)
+#define COOP_HS_EXIT (coop_door_hs && current_map != MAP_TROFF_N_SCOFF && coop_door_ret1 > 0) // arrival in a world after leaving Troff 'n' Scoff (Hott&Stroff exit)
+
+static int coop_tg_map = MAP_TRAINING_GROUNDS; // map in which the Kong who stays is held (Training Grounds, or DK Isles for the shops / labs)
+static int coop_tg_stayer = 1;   // player who stays in the Training Grounds while the other plays the barrel
+// Arrival scenes with story cutscenes: Training Grounds -> DK Isles (parrot, then the cutscene showing the next place to go) and
+// DK Isles -> Klumsy (first visit: roll, Klumsy talks, opens the first world's hall). The Kong who walked in (coop_isles_who)
+// keeps the full screen, the speech and the camera until the last cutscene is over; then the split screen fades back.
+static int coop_isles_scene = 0;
+static int coop_isles_map = 0;  // map the scene happens in (destination of the zone)
+static int coop_isles_from = 0; // map the player came from
+static int coop_isles_trip = 0; // the scene is Klumsy's sequence (it may go to DK Isles and back, longer pauses)
+static int coop_cs_trig = -1;   // Japes lobby, B. Locker cutscene (camera focus + text): Kong who triggered it (0/1), -1 if none; nobody is teleported to the other
+static int coop_tg_cave = 0;    // arriving in the Training Grounds by the cave (from DK Isles): P1 walks, P2 keeps P1's heading during the walk
+static int coop_tg_cave_on = 0; // the walk of that entry has started
+static int coop_jp18 = 0;      // Japes arrival cutscene (18) has played and its speech bubble may still be shown: P1's full screen, pads locked until it ends
+static int coop_txt_last = -100; // last frame a speech bubble was updated (the parrot's last lines outlast the cutscene)
+static int coop_glue_side = 0;  // P1 ran a forced walk during this cutscene: P2 is kept at his side (see the glue at the end of func_global_asm_8067889C)
+static int coop_isles_cs = 0;   // a real cutscene has played in this scene (the first visit): long pauses are expected before the hall scene
+static int coop_isles_ret = 0;  // back in Klumsy after the hall scene: only the last text and the walk remain, no long pause
+static int coop_isles_who = 0;
+static int coop_isles_seen = 0; // a cutscene / walk has been seen since the arrival
+static int coop_isles_idle = 0; // frames without cutscene nor walk
+static int coop_isles_t = 0;    // frames since the arrival
+static void coop_mg_swap_persona(void) {
+    u8 t = current_character_index[0];
+    int i;
+    current_character_index[0] = current_character_index[1];
+    current_character_index[1] = t;
+    for (i = 0x2F0; i < 0x2FE; i++) {
+        t = D_global_asm_807FC950[i];
+        D_global_asm_807FC950[i] = D_global_asm_807FC950[0x306 + i];
+        D_global_asm_807FC950[0x306 + i] = t;
+    }
+}
+extern f32 func_global_asm_80612794(s16);
+extern f32 func_global_asm_80612790(s16);
+static int coop_active_here(void);
+static OSContPad coop_zero_pad; // neutral pad
+extern Actor *D_global_asm_807FD710; // actor that follows the autowalk path
+// Player who walks into a loading zone: P2 when he is the one who triggered it (a single-player map follows: lab, shop...)
+extern Actor *gPlayerPointer;
+extern s16 D_global_asm_807FDCB8;
+extern s16 D_global_asm_807FDCBC;
+static int coop_dbg_st[2]; // control state of both Kongs (tracked each frame)
+Actor *coop_zone_player(void) {
+    if (coop_mg_pending && coop_active_here() && character_change_array != NULL && character_change_array[1].does_player_exist
+        && character_change_array[1].playerPointer != NULL) return character_change_array[1].playerPointer;
+    // (gPlayerPointer is the Kong nearest to the zone, not necessarily the one who walked into it: when P1 entered, P1 walks)
+    if (coop_active_here() && current_map == MAP_TRAINING_GROUNDS && character_change_array != NULL && character_change_array[0].playerPointer != NULL)
+        return character_change_array[0].playerPointer;
+    // elsewhere: the Kong that is running into the zone (state 13) while the other one stands, else the nearest one
+    if (coop_active_here() && character_change_array != NULL && character_change_array[1].does_player_exist
+        && character_change_array[0].playerPointer != NULL && character_change_array[1].playerPointer != NULL) {
+        if (coop_dbg_st[1] == 13 && coop_dbg_st[0] != 13) return character_change_array[1].playerPointer;
+        if (coop_dbg_st[0] == 13 && coop_dbg_st[1] != 13) return character_change_array[0].playerPointer;
+        if (coop_dbg_st[0] == 13 && coop_dbg_st[1] == 13) {
+            // both running: the one closest to the zone (its position is set before the walk starts)
+            Actor *z0 = character_change_array[0].playerPointer, *z1 = character_change_array[1].playerPointer;
+            f32 dz0 = SQ(z0->x_position - D_global_asm_807FDCB8) + SQ(z0->z_position - D_global_asm_807FDCBC);
+            f32 dz1 = SQ(z1->x_position - D_global_asm_807FDCB8) + SQ(z1->z_position - D_global_asm_807FDCBC);
+            return dz1 < dz0 ? z1 : z0;
+        }
+    }
+    return gPlayerPointer;
+}
+// 1 while P2 enters a single-player map (door walk + cutscene) or comes back out of it (his walk), else -1
+static int coop_enter_user(void) {
+    if (coop_mg_pending || coop_mg_ret > 0 || coop_door_trig == 1) return 1;
+    if (coop_isles_scene && coop_isles_who == 1 && current_map == coop_isles_map) return 1;
+    if (coop_cs_trig == 1 && is_cutscene_active != 0) return 1;
+    return -1;
+}
+// Called when a cutscene starts (playCutscene): in the Japes lobby the B. Locker cutscenes (idx not a world door) belong to the Kong closest to him
+void coop_cs_pre(int idx, Actor *subject) {
+    int i;
+    Actor *lk = NULL;
+    Actor *k0, *k1;
+    f32 d0, d1;
+    if (!coop_active_here() || character_change_array == NULL) return;
+    k0 = character_change_array[0].playerPointer;
+    k1 = character_change_array[1].playerPointer;
+    if (!character_change_array[1].does_player_exist || k0 == NULL || k1 == NULL) return;
+    if (current_map != MAP_JAPES_LOBBY || idx == 28 || idx == 29 || idx == 30) return;
+    for (i = 0; i < D_global_asm_807FBB34; i++) {
+        Actor *a = D_global_asm_807FB930[i].unk0;
+        if (a != NULL && a->unk58 == ACTOR_B_LOCKER) { lk = a; break; }
+    }
+    if (lk == NULL) return;
+    d0 = SQ(k0->x_position - lk->x_position) + SQ(k0->z_position - lk->z_position);
+    d1 = SQ(k1->x_position - lk->x_position) + SQ(k1->z_position - lk->z_position);
+    coop_cs_trig = (d1 < d0) ? 1 : 0;
+}
+// Klumsy arrival scene: player (0/1) who walked in and for whom the cutscene commands bound to "the player" (roll, actions...) run, else -1
+int coop_scene_who(void) {
+    if (coop_active_here() && current_map == MAP_KLUMSY) return coop_isles_who;
+    return -1;
+}
+// Klumsy arrival scene, P2 walked in: a text command of the cutscene spoken by "the player" (command 0x18 / 0x39 without a spawner) is
+// spoken by P2, so the speech bubble comes out of his head. Returns P2's actor, else NULL.
+Actor *coop_scene_speaker(s32 cmd, s32 a1) {
+    int c = cmd & 0xFF;
+    if (character_change_array == NULL || character_change_array[1].playerPointer == NULL) return NULL;
+    if ((c == 0x18 || c == 0x39) && ((a1 >> 16) & 0xFFFF) == 0 && coop_scene_who() == 1) {
+        return character_change_array[1].playerPointer;
+    }
+    return NULL;
+}
+int coop_mg_colour(void) { return (coop_mg_swapped && !coop_map_allowed()) ? coop_mg_col : -1; }
+static int coop_tg_saved = 0;
+static int coop_tg_hold = 0;   // back from the lab / a barrel: the player who stayed is kept at his saved spot until the scene is over
+static int coop_tg_hold_t = 0; // frames spent in Training Grounds since the return
+static int coop_tg_fade = -1;  // player who entered the barrel / lab: his view shrinks to the split screen when he comes back (-1: none)
+static f32 coop_tg_x, coop_tg_y, coop_tg_z;
+static s16 coop_tg_rot;
+
+// ---- Story co-op: choice of the two Kongs on the stats screen of the file menu (patches_ui.c draws the cursors) ----
+// Each player moves his own cursor with the D-pad (left / right) under the Kongs that are unlocked; when P1 presses A the two positions are read and
+// applied to the first co-op spawn of the game (func_global_asm_806C7D40). Both cursors start under Donkey Kong.
+static u8 coop_menu_sel[2] = {0, 0};
+static u8 coop_menu_pick[2] = {0, 0}; // the two choices read when P1 pressed A (the cursors themselves go back under Donkey Kong at once)
+static int coop_menu_apply = 0;
+void coop_menu_reset(void) { coop_menu_sel[0] = 0; coop_menu_sel[1] = 0; }
+int coop_menu_get(int p) { return (p == 0 || p == 1) ? coop_menu_sel[p] : 0; }
+void coop_menu_move(const s8 *unlocked) {
+    int p;
+    for (p = 0; p < 2; p++) {
+        int dir = 0, j;
+        if (unlocked[coop_menu_sel[p]] == 0) coop_menu_sel[p] = 0; // (another save with fewer Kongs unlocked)
+        if (newly_pressed_input[p] & 0x0200) dir = -1; // D-pad left
+        else if (newly_pressed_input[p] & 0x0100) dir = 1; // D-pad right
+        if (dir == 0) continue;
+        for (j = (int)coop_menu_sel[p] + dir; j >= 0 && j < 5; j += dir) {
+            if (unlocked[j] != 0) {
+                coop_menu_sel[p] = (u8)j;
+                playSound(0x74, 0x7FFF, 63.0f, 1.0f, 0, 0); // same sound as when a Kong / colour is changed on the battle selection screen
+                break;
+            }
+        }
+    }
+}
+void coop_menu_commit(void) {
+    coop_menu_pick[0] = coop_menu_sel[0]; coop_menu_pick[1] = coop_menu_sel[1];
+    coop_menu_apply = 1;
+    coop_menu_reset(); // the next visit of the stats screen starts again under Donkey Kong
+}
+
+// ---- Story co-op: what a Kong buys in a shop (Funky: weapon, ammo belt, scope, homing ammo; Candy: instrument, upgrades; Cranky: moves) is also
+// given to the other Kong (for free). The shop is a single-player map played by the Kong who went in (persona in slot 0, the other one in slot 1: see
+// coop_mg_swap_persona). At the shop's load the buyer's data is remembered; when the world is loaded again (persona not yet given back) what he gained
+// is copied to the other Kong's own entry of the progress (per-Kong data of both Kongs live in player 0's block) and to the other player's ammo pools.
+static int coop_sh_active = 0;
+static int coop_sh_go = 0; // a shop is being entered from a co-op map with both players
+static u8 coop_sh_kong = 0;
+static u8 coop_sh_b[10];
+static u16 coop_sh_std, coop_sh_hom;
+static void coop_shop_snapshot(void) {
+    int i;
+    u8 k = current_character_index[0];
+    if (k >= 6) return;
+    coop_sh_kong = k;
+    for (i = 0; i < 10; i++) coop_sh_b[i] = D_global_asm_807FC950[k * 0x5E + i];
+    coop_sh_std = *(u16 *)&D_global_asm_807FC950[0x2F0];
+    coop_sh_hom = *(u16 *)&D_global_asm_807FC950[0x2F0 + 2];
+    coop_sh_active = 1;
+}
+static void coop_shop_mirror(void) {
+    u8 k = coop_sh_kong;
+    u8 o = current_character_index[1];
+    u8 *kb, *ko;
+    u16 *pstd, *phom, std_max, hom_max, ostd_max, ohom_max;
+    coop_sh_active = 0;
+    if (k >= 6 || o >= 6) return;
+    kb = &D_global_asm_807FC950[k * 0x5E];
+    ko = &D_global_asm_807FC950[o * 0x5E];
+    // (both players can play the same Kong: the per-Kong fields are then shared and only the ammo pools below have to be copied)
+    if (o != k) {
+    if (kb[0] > coop_sh_b[0] && ko[0] < kb[0]) ko[0] = kb[0];       // moves (level)
+    if (kb[1] > coop_sh_b[1] && ko[1] < kb[1]) ko[1] = kb[1];       // simian slam level
+    ko[2] |= kb[2] & ~coop_sh_b[2];                                  // weapon bits (gun, homing, scope)
+    if (kb[3] > coop_sh_b[3] && ko[3] < kb[3]) ko[3] = kb[3];       // ammo belt
+    ko[4] |= kb[4] & ~coop_sh_b[4];                                  // instrument bits
+    {
+        // coins: what the buyer spent is taken from the other Kong too (the coins are shared between the Kongs)
+        u16 cb = *(u16 *)&kb[6], cbb = (u16)((coop_sh_b[6] << 8) | coop_sh_b[7]), *co = (u16 *)&ko[6];
+        if (cb < cbb) {
+            u16 spent = (u16)(cbb - cb);
+            *co = (*co > spent) ? (u16)(*co - spent) : 0;
+        }
+    }
+    {
+        u16 ba = *(u16 *)&kb[8], bb = (u16)((coop_sh_b[8] << 8) | coop_sh_b[9]), *oa = (u16 *)&ko[8];
+        if (ba > bb && *oa < ba) *oa = ba;                           // instrument ammo (refilled / upgraded)
+    }
+    }
+    // ammo pools: the buyer's pools are in block 0 (slot 0), the other player's in block 1
+    pstd = (u16 *)&D_global_asm_807FC950[0x306 + 0x2F0];
+    phom = (u16 *)&D_global_asm_807FC950[0x306 + 0x2F2];
+    std_max = (u16)((1 << kb[3]) * 50);
+    hom_max = (u16)(kb[3] * 5 + 20);
+    ostd_max = (u16)((1 << ko[3]) * 50);
+    ohom_max = (u16)(ko[3] * 5 + 20);
+    {
+        u16 now = *(u16 *)&D_global_asm_807FC950[0x2F0];
+        if (now > coop_sh_std) {
+            u32 v = (now >= std_max) ? ostd_max : (u32)*pstd + (now - coop_sh_std); // refilled to the top: the other one is too
+            *pstd = (u16)(v > ostd_max ? ostd_max : v);
+        }
+    }
+    {
+        u16 now = *(u16 *)&D_global_asm_807FC950[0x2F2];
+        if (now > coop_sh_hom) {
+            u32 v = (now >= hom_max) ? ohom_max : (u32)*phom + (now - coop_sh_hom);
+            *phom = (u16)(v > ohom_max ? ohom_max : v);
+        }
+    }
+}
+
 RECOMP_PATCH void func_global_asm_806C7D40(s32 arg0) {
     s32 var_v0;
     s32 i;
@@ -2024,6 +2325,28 @@ RECOMP_PATCH void func_global_asm_806C7D40(s32 arg0) {
     // TWO Kong actors / two character_change entries.
     coop_n = (recomp_get_coop_enabled() && coop_map_allowed() && D_global_asm_80750AC0 >= 2) ? 2 : cc_number_of_players;
     coop_mode = (coop_n == 2 && cc_number_of_players == 1);
+    if (current_map == MAP_MAIN_MENU) { coop_p2_kong_mem = 0xFF; coop_tg_free = 0; coop_tg_saved = 0; coop_tg_hold = 0; coop_tg_fade = -1; coop_isles_scene = 0; }
+    if (coop_map_allowed() && current_map != coop_tg_map) { coop_tg_saved = 0; coop_tg_fade = -1; }
+    // shop left: what the buyer got is given to the other Kong (before the persona goes back to its slot)
+    if (coop_sh_active && coop_map_allowed() && !coop_is_shop(current_map)) coop_shop_mirror();
+    // Bonus barrel (or lab) played by P2: his persona (Kong, ammo, health) takes the player 0 slot of the single-player map; given back on return
+    if (coop_mg_swapped && coop_map_allowed()) {
+        coop_mg_swap_persona();
+        coop_mg_swapped = 0;
+        coop_mg_ret = 240;
+    } else if (coop_mg_pending) {
+        if (!coop_map_allowed() && !coop_mg_swapped) { coop_mg_swap_persona(); coop_mg_swapped = 1; }
+        coop_mg_pending = 0;
+    }
+    // shop entered (with two players): remember what the buyer owns now
+    if (coop_is_shop(current_map) && coop_sh_go) { coop_shop_snapshot(); coop_sh_go = 0; }
+    // back from a crown arena: J1 reappears at the arena warp, P2 would be at the world's start; he is put beside J1 (see func_global_asm_8067889C)
+    coop_arena_back = (coop_arena_was && coop_map_allowed() && !coop_is_arena(current_map)) ? 40 : 0;
+    coop_arena_was = coop_is_arena(current_map);
+    coop_door_ret1 = (coop_door_p1 && coop_map_allowed()) ? 240 : 0; coop_door_p1 = 0;
+    coop_door_p2 = 0; // (exits are always walked by P1: no P2 walker any more)
+    coop_door_trig = -1; // the Kong who walked in is not needed any more: the arrival is walked by P1
+    if (current_map == MAP_MAIN_MENU) coop_mg_swapped = 0; // (re)loading the game: the next co-op spawn starts again from P1's Kong + 1
     if (coop_mode) {
         // P2 starts with a copy of P1's progress (health, moves...)
         {
@@ -2045,13 +2368,27 @@ RECOMP_PATCH void func_global_asm_806C7D40(s32 arg0) {
             D_global_asm_807FC950[0x306 + 0x2FD] = 0;
             coop_p2_hp_valid = 1;
         }
+        // choice made on the file menu (stats screen): the first co-op spawn after launching the game uses the Kongs chosen by the two players
+        if (coop_menu_apply && current_map != MAP_MAIN_MENU) {
+            if (coop_kong_unlocked(coop_menu_pick[0])) current_character_index[0] = coop_menu_pick[0];
+            if (coop_kong_unlocked(coop_menu_pick[1])) { current_character_index[1] = coop_menu_pick[1]; coop_p2_kong_mem = coop_menu_pick[1]; }
+        }
         // P2 plays a different Kong than P1, except in a boss arena (the boss is made for one Kong: both players play it)
         if (current_map == MAP_JAPES_ARMY_DILLO) {
             current_character_index[1] = current_character_index[0];
-        } else if (current_character_index[1] == current_character_index[0] || current_character_index[1] > 4) {
-            current_character_index[1] = (current_character_index[0] + 1) % 5;
+        } else if (coop_p2_kong_mem <= 4 && coop_kong_unlocked(coop_p2_kong_mem)) {
+            current_character_index[1] = coop_p2_kong_mem; // P2 keeps his own Kong across warps
+        } else if (current_character_index[1] == current_character_index[0] || current_character_index[1] > 4 || !coop_kong_unlocked(current_character_index[1])) {
+            // first spawn after loading the game: the next unlocked Kong after P1's; none -> P2 plays the same Kong as P1
+            int k, pick = current_character_index[0];
+            for (k = 1; k < 5; k++) {
+                int c = (current_character_index[0] + k) % 5;
+                if (coop_kong_unlocked(c)) { pick = c; break; }
+            }
+            current_character_index[1] = pick;
         }
     }
+    if (current_map != MAP_MAIN_MENU) coop_menu_apply = 0; // (only the first map after the file menu uses the choice)
     character_change_array = _malloc(coop_n * 0x2F0);
     func_global_asm_80611690(character_change_array);
     for (i = 0; i < coop_n; i++) {
@@ -2442,6 +2779,7 @@ extern s16 D_global_asm_807476F4;
 extern u16 D_global_asm_807F5CF4;
 extern Actor *D_global_asm_807F5CE8;
 extern Actor *D_global_asm_807F5D10;
+static int coop_cannon_cam_map = -1; // map in which that camera actor was saved (stale after a map change)
 static Actor *coop_cannon_cam_saved = NULL; // P1's camera actor while the cutscene is bound to P2's camera
 static int coop_barrel_busy = 0;              // P2 is choosing in the tag barrel: the scene (camera 0) is shown on P2's screen only
 static Actor *coop_barrel_user_actor = NULL; // the Kong who entered the barrel
@@ -2452,10 +2790,20 @@ static int coop_barrel_sel = 0;               // a tag barrel selection is runni
 // Japes cannon (control states 0x42 entering / 0x45 flying): index of the Kong using a cannon, -1 if none
 static int coop_cannon_user(void) {
     int k;
-    if (!coop_active_here()) return -1;
+    if (!coop_active_here() || current_map == MAP_TRAINING_GROUNDS) return -1; // (state 0x42 is also the bonus barrel entry)
     for (k = 0; k < 2; k++) {
         Actor *p = character_change_array[k].playerPointer;
         if (character_change_array[k].does_player_exist && p != NULL && (p->control_state == 0x42 || p->control_state == 0x45)) return k;
+    }
+    return -1;
+}
+// Training Grounds: player (0/1) who is entering a bonus barrel (state 62 / 66), else -1
+static int coop_barrel_user(void) {
+    int k;
+    if (!coop_active_here() || current_map != MAP_TRAINING_GROUNDS || character_change_array == NULL) return -1;
+    for (k = 1; k >= 0; k--) {
+        Actor *p = character_change_array[k].playerPointer;
+        if (character_change_array[k].does_player_exist && p != NULL && (p->control_state == 62 || p->control_state == 66)) return k;
     }
     return -1;
 }
@@ -2499,36 +2847,111 @@ static int coop_barrel_chooser_now(void) {
 // - scripted cutscenes (speech bubbles of Scoff/Troff, Squawks...): both Kongs see the same scene, so only one view is shown.
 //   Not for the Japes cannon (one Kong flies while the other keeps playing) nor the death camera.
 #define COOP_P_FULLSCREEN_CS 1
-static int coop_fullscreen_now(void) {
+extern u8 D_global_asm_807FC8B9;
+extern u8 is_autowalking;
+// World door entry / exit: the walk is shown full screen, then the split screen comes back while the cutscene (Kong shrinking /
+// growing and spinning) is still running. 0 = keep the full screen until the end of that cutscene (old behaviour).
+#define COOP_ENTRY_EARLY_SPLIT 1
+#define COOP_ENTRY_SPLIT_AT 56 // tick (since the map start) at which the split screen comes back after a world door cutscene
+#define COOP_ENTRY_DELAY 16 // ticks of full screen kept after the walk of a world door (10 for caves / lobbies)
+static int coop_ex_player = -1;   // entry transition running: player whose view is growing to full screen (both views are still drawn)
+static int coop_arrive_pending = 0; // a map change between co-op maps was requested (func_global_asm_805FF378): the next map is an arrival
+static int coop_fs_walk = 0; // 1 when the last coop_fullscreen_raw() full screen only came from a door / cave walk (no cutscene or scene)
+static int coop_fullscreen_raw(void) {
     static u32 fs_stamp = 0;
+    static u32 aw_stamp = 0;
+    static int aw_on = 0;
     static int fs_player = -1;
     static int fs_feed = 0;
+    static int fs_entry = 0;
+    static int aw_player = 0; // player whose view is shown full screen during the walk (the one who walks)
+    static int entry_cs = 0; // current cutscene started with the map (world door entry / exit)
+    static int fs_map = -1;
+    static int aw_prev = 0;
+    static int arr_ph = 0, arr_seen = 0;
+    static int aw_arrival = 0; // the current walk is an arrival walk (starts right after the map load): no full screen, both views are shown
+    static int hs_fed = 0; // Troff 'n' Scoff: a Kong has fed the hippos in this visit (the first visit's introduction cutscene is over)
     int ch = coop_barrel_chooser_now();
+    coop_fs_walk = 0;
+    // the entry full screen ends with the map change: the arrival is shown in split screen
+    if (fs_map != (int)current_map) { fs_map = (int)current_map; aw_on = 0; hs_fed = 0; arr_ph = coop_arrive_pending; coop_arrive_pending = 0; arr_seen = 0; }
+    // arrival phase (co-op map -> co-op map): from the map start to the end of the exit walk and of the door cutscene; the view of the
+    // Kong who walks is NOT shown full screen during it
+    if (arr_ph) {
+        if (is_autowalking == 3) arr_seen = 1;
+        else if (arr_seen && (is_cutscene_active != 1 || (u32)object_timer > 120)) arr_ph = 0;
+        else if ((u32)object_timer > 600) arr_ph = 0;
+    }
+    if (is_autowalking == 3 && !aw_prev) aw_arrival = ((u32)object_timer < 40 || (current_map == MAP_TRAINING_GROUNDS && coop_tg_cave));
+    aw_prev = (is_autowalking == 3);
+    // cutscene that starts with the map (world door entry / exit); must be tracked while the entry walk (early return below) runs
+    if (is_cutscene_active != 1) entry_cs = 0;
+    else if ((u32)object_timer < 12 && (current_map != MAP_TRAINING_GROUNDS || coop_tg_cave)) entry_cs = 1; // (Training Grounds: new game intro and the scene after Cranky's lab are real cutscenes, not door entries; the cave from DK Isles is one)
     if (ch >= 0) return ch;
+    // Troff 'n' Scoff, first visit: the pig's explanation and the camera shot on the banana feeding pad are played on P1's screen, full screen, until
+    // the end of the cutscene (then the split screen comes back); the feeding itself (state 0x6C) keeps the rules below
+    if (coop_active_here() && current_map == MAP_TROFF_N_SCOFF) {
+        Actor *h0 = character_change_array[0].playerPointer;
+        Actor *h1 = character_change_array[1].playerPointer;
+        if ((h0 != NULL && h0->control_state == 0x6C) || (h1 != NULL && h1->control_state == 0x6C)) hs_fed = 1;
+        if (!hs_fed && is_cutscene_active == 1 && is_autowalking != 3 && !coop_death_cam()) return 0;
+    }
+    // Jungle Japes arrival cutscene (parrot, Hott&Stroff door, parrot; cutscene 18): played on P1's screen only, full screen, whoever walked in
+    // (the script state is global: with the split screen both cameras advanced it, it ran at double speed)
+    // and while the parrot's last lines are still shown after the cutscene (the pads are locked, see func_global_asm_8067889C)
+    if (coop_active_here() && current_map == MAP_JAPES && ((is_cutscene_active == 1 && D_global_asm_807476F4 == 18)
+        || (coop_jp18 && (int)object_timer >= coop_txt_last && (int)object_timer - coop_txt_last <= 3))) return 0;
+    // first exit of the Training Grounds (parrot + cutscene towards the next place): the Kong who walked out keeps the whole screen
+    // (Training Grounds -> DK Isles: only the first time has a scene (parrot); the other times it is a plain walk, shown like any arrival,
+    // so the full screen only starts once a real cutscene has been seen)
+    if (coop_isles_scene && coop_active_here() && (coop_isles_trip || coop_isles_cs) && (current_map == coop_isles_map || (coop_isles_trip && current_map == coop_isles_from))) return coop_isles_who;
+    // pause menu: the split screen stays as it is (the menu is drawn over it, for the player who pressed START)
+    // door / cave / lobby entry and exit walk (is_autowalking == 3): the whole screen shows P1's view, the split screen comes back
+    // a few frames after the walk is over
+    if (coop_active_here() && is_autowalking == 3 && !aw_arrival && !arr_ph) {
+        aw_on = 1; aw_stamp = (u32)object_timer;
+        aw_player = (D_global_asm_807FD710 != NULL && D_global_asm_807FD710 == character_change_array[1].playerPointer) ? 1 : 0;
+        coop_fs_walk = 1;
+        return aw_player;
+    }
+    if (aw_on) {
+        coop_fs_walk = 1;
+        if (COOP_ENTRY_EARLY_SPLIT && entry_cs && (u32)object_timer <= COOP_ENTRY_SPLIT_AT && coop_active_here()) return (aw_player == 1 && coop_enter_user() == 1) ? 1 : 0; // world door entry / exit: same split moment for both
+        if ((u32)((u32)object_timer - aw_stamp) <= (u32)((COOP_ENTRY_EARLY_SPLIT && entry_cs) ? COOP_ENTRY_DELAY : 10) && coop_active_here()) return (aw_player == 1 && coop_enter_user() == 1) ? 1 : 0;
+        coop_fs_walk = 0;
+        aw_on = 0;
+    }
 #if COOP_P_FULLSCREEN_CS
-    if (coop_active_here() && !coop_death_cam() && coop_cannon_user() < 0
+    if (coop_active_here() && !coop_death_cam() && coop_cannon_user() < 0 && !(arr_ph && coop_cs_trig < 0 && ch < 0)
         && !(current_map == MAP_JAPES && D_global_asm_807476F4 == 22)) {
         Actor *c0 = character_change_array[0].playerPointer;
         Actor *c1 = character_change_array[1].playerPointer;
         int want = -1;
-        if (is_cutscene_active == 1) {
+        // door entry / exit cutscene: the full screen only lasts for the walk (is_autowalking == 3), then the split screen comes
+        // back while the cutscene goes on
+        if (is_cutscene_active == 1 && !(COOP_ENTRY_EARLY_SPLIT && entry_cs && (is_autowalking != 3 || aw_arrival))) {
             want = (c1 != NULL && D_global_asm_807F5CE8 == c1) ? 1 : 0;
+            if (coop_door_trig >= 0 && !entry_cs) want = coop_door_trig;
         } else if (c0 != NULL && c0->control_state == 0x6C) {
             want = 0; // a Kong feeding Troff/Scoff (state 0x6C): the cutscene flag drops to 0 between the camera shots
         } else if (c1 != NULL && c1->control_state == 0x6C) {
             want = 1;
         }
+        if (is_cutscene_active == 1 && coop_barrel_user() >= 0) want = coop_barrel_user();
+        if (is_cutscene_active == 1 && current_map == MAP_TRAINING_GROUNDS && coop_barrel_user() < 0 && coop_enter_user() == 1) want = 1;
+        if (is_cutscene_active == 1 && coop_cs_trig >= 0) want = coop_cs_trig; // Japes lobby, B. Locker: the Kong who triggered it has the screen // back from Cranky's lab entered by P2: his view, full screen
         if (want >= 0) {
             fs_stamp = (u32)object_timer;
             fs_player = want;
             fs_feed = (is_cutscene_active != 1); // kept because of the feeding state, not a cutscene
+            if ((u32)object_timer < 12 && current_map != MAP_TRAINING_GROUNDS) fs_entry = 1; // cutscene that starts with the map (world door entry / exit): no long hold afterwards
             return want;
         }
         // Hold after the scene: short between two camera shots; after the feeding of Troff/Scoff the hippo's animation and the
         // camera shot on it go on for a few seconds (controls still locked), so hold longer unless a player touches a control.
         if (fs_player >= 0) {
             u32 age = (u32)((u32)object_timer - fs_stamp);
-            u32 maxage = fs_feed ? 300 : 20;
+            u32 maxage = fs_feed ? 300 : (fs_entry ? 2 : 20);
             if (fs_feed && age >= 30) {
                 int k;
                 for (k = 0; k < 2; k++) {
@@ -2541,7 +2964,13 @@ static int coop_fullscreen_now(void) {
     }
 #endif
     fs_player = -1;
+    fs_entry = 0;
     return -1;
+}
+
+static int coop_fullscreen_now(void) {
+    if (coop_ex_player >= 0) return -1;
+    return coop_fullscreen_raw();
 }
 
 // Troff 'n' Scoff feeding: the hippo script (806BE09C) asks for its camera effects on the camera actor taken from the player data,
@@ -2576,6 +3005,139 @@ Actor *coop_fx_cam(Actor *cam, Actor *target) {
     }
     if ((cam == kc[0] || cam == kc[1]) && owner_cam != NULL && (u32)((u32)object_timer - stamp) < 900) return owner_cam;
     return cam;
+}
+
+// ---- Split-screen transition ----
+// When a full-screen scene ends (entry/exit walk, cutscene, hippo, tag barrel), the split screen does not pop in: the view that was
+// shown full screen shrinks to its half while the other player's view appears. Not used when leaving the pause menu.
+#define COOP_TR_TICKS 6      // split screen coming back
+#define COOP_TR_TICKS_IN 9   // entry: the view grows to full screen
+static int coop_tr_player = -1;   // player whose view is the big one (-1: no transition running)
+static int coop_tr_mode = 0;      // 0: split screen coming back (view shrinks), 1: entry (view grows to full screen)
+static u32 coop_tr_start = 0;
+static int coop_tr_map = 0;
+static int coop_tr_prev = -1;
+static int coop_tr_prev_pause = 0;
+static int coop_tr_scene = 0;     // the full screen being left included a cutscene / scene (not only an entry / exit walk)
+static int coop_tr_split = 120;   // current y of the line between the two views
+// y of the line between the two views, "age" ticks after the start of the running transition
+static int coop_tr_split_at(u32 age) {
+    int fin = coop_vp_rect[0][3], big = (coop_tr_player == 0) ? 240 : 0;
+    int from = coop_tr_mode ? fin : big, to = coop_tr_mode ? big : fin;
+    u32 dur = coop_tr_mode ? COOP_TR_TICKS_IN : COOP_TR_TICKS;
+    f32 t = (f32)age / (f32)dur, e;
+    int r;
+    if (t > 1.0f) t = 1.0f;
+    e = t * t * (3.0f - 2.0f * t);
+    r = from + (int)((f32)(to - from) * e);
+    if (r < 4) r = 4;
+    if (r > 236) r = 236;
+    return r;
+}
+extern u8 D_global_asm_80770DC9;
+static void coop_tr_update(void) {
+    int fs, pause_;
+    if (!coop_active_here()) { if (current_map == MAP_MAIN_MENU) { coop_tr_prev = -1; coop_tr_player = -1; coop_ex_player = -1; } return; }
+    fs = coop_fullscreen_raw();
+    pause_ = (global_properties_bitfield & 2) ? 1 : 0;
+    // back from a barrel (no full-screen scene on return): the view of the Kong who came out shrinks to the split screen
+    if (coop_tg_fade >= 0 && current_map == coop_tg_map && (u32)object_timer < 90) { // (only right after the map load)
+        if (fs < 0 && !pause_) { coop_tr_prev = coop_tg_fade; coop_tr_prev_pause = 0; }
+        coop_tg_fade = -1;
+        coop_tr_scene = 0; // plain return from a barrel / the lab: both views are already there
+    }
+    {
+        // barrel entry: the view grows to full screen on the first frame of the barrel state, even if the full screen was already on
+        static int bu_prev = -1;
+        int bu = (current_map == MAP_TRAINING_GROUNDS) ? coop_barrel_user() : -1;
+        if (bu >= 0 && bu_prev < 0 && fs >= 0 && coop_ex_player < 0 && coop_vp_saved) coop_tr_prev = -1;
+        bu_prev = bu;
+    }
+    if (fs >= 0 && !coop_fs_walk) coop_tr_scene = 1;
+    if (fs >= 0) {
+        if (coop_ex_player < 0) {
+            Actor *c0_ = character_change_array[0].playerPointer;
+            // entry into a cave / lobby / world door (walk or shrinking cutscene): the view grows to full screen instead of popping
+            if (coop_tr_prev < 0 && coop_vp_saved && (is_autowalking == 3 || (c0_ != NULL && (c0_->control_state == 135 || (current_map == MAP_TRAINING_GROUNDS && coop_barrel_user() >= 0))))) {
+                coop_ex_player = fs;
+                coop_tr_player = fs;
+                coop_tr_mode = 1;
+                coop_tr_start = (u32)object_timer;
+                coop_tr_map = (int)current_map;
+            } else {
+                coop_tr_player = -1;
+            }
+        }
+    } else {
+        coop_ex_player = -1;
+        // the split screen only shrinks back after a cutscene / scene; after a plain arrival (walk, barrel, lab) both views just appear
+        if (coop_tr_prev >= 0 && !coop_tr_prev_pause && coop_vp_saved && coop_tr_scene) {
+            coop_tr_player = coop_tr_prev;
+            coop_tr_mode = 0;
+            coop_tr_start = (u32)object_timer;
+        }
+        coop_tr_scene = 0;
+    }
+    if (coop_tr_player >= 0) {
+        u32 age;
+        f32 t, e;
+        int fin = coop_vp_rect[0][3], big = (coop_tr_player == 0) ? 240 : 0;
+        int from = coop_tr_mode ? fin : big, to = coop_tr_mode ? big : fin;
+        if ((u32)object_timer < coop_tr_start) coop_tr_start = (u32)object_timer;
+        age = (u32)object_timer - coop_tr_start;
+        u32 dur = coop_tr_mode ? COOP_TR_TICKS_IN : COOP_TR_TICKS;
+        if (age >= dur || (coop_tr_mode && coop_tr_map != (int)current_map)) {
+            coop_tr_player = -1;
+            coop_ex_player = -1;
+        } else {
+            t = (f32)age / (f32)dur;
+            e = t * t * (3.0f - 2.0f * t);
+            coop_tr_split = from + (int)((f32)(to - from) * e);
+            if (coop_tr_split < 4) coop_tr_split = 4;
+            if (coop_tr_split > 236) coop_tr_split = 236;
+        }
+    }
+    coop_tr_prev = fs;
+    coop_tr_prev_pause = pause_;
+}
+int coop_transition_query(void) { return coop_tr_player >= 0; }
+
+// Warp pad swipe (screen capture drawn over the scene, types 2 and 6 of func_global_asm_806291B4): it is limited to the half of the
+// Kong who warps, the other half keeps showing the live scene.
+static int coop_fx_pl = -1;
+void coop_fx_begin(int type) {
+    int k;
+    coop_fx_pl = -1;
+    if ((type != 2 && type != 6) || !coop_active_here() || !coop_vp_saved || !character_change_array[1].does_player_exist) return;
+    for (k = 0; k < 2; k++) {
+        if (gCurrentActorPointer != NULL && gCurrentActorPointer == character_change_array[k].playerPointer) coop_fx_pl = k;
+    }
+}
+// Storm rain (K. Rool's ship...): the weather script spawns the particles of each Kong separately; a particle is drawn only in the
+// half of the Kong it belongs to (owner 0/1; -1 while spawning for a single player = whole screen as in the original).
+static int coop_wx_own = -1;
+void coop_wx_set_owner(int p) { coop_wx_own = p; }
+int coop_wx_get_owner(void) { return coop_wx_own; }
+int coop_wx_two(void) {
+    return coop_active_here() && coop_vp_saved && character_change_array[1].does_player_exist && character_change_array[1].playerPointer != NULL;
+}
+// 0: do not draw the particles of this owner; 1: draw them, clipped to the rows [top, bottom]
+int coop_wx_range(int owner, int *top, int *bottom) {
+    int fs;
+    *top = 0; *bottom = 240;
+    if (!coop_wx_two()) return 1;
+    fs = coop_fullscreen_now();
+    if (fs >= 0) return fs == owner;
+    *top = coop_vp_rect[owner][1];
+    *bottom = coop_vp_rect[owner][3];
+    return 1;
+}
+// 1 and the y range (top, bottom) of the warper's half, else 0 (whole screen)
+int coop_fx_range(int *top, int *bottom) {
+    if (coop_fx_pl < 0 || !coop_active_here() || !coop_vp_saved || coop_fullscreen_now() >= 0) return 0;
+    *top = coop_vp_rect[coop_fx_pl][1];
+    *bottom = coop_vp_rect[coop_fx_pl][3];
+    return 1;
 }
 
 int coop_fullscreen_query(void) { return coop_fullscreen_now(); }
@@ -2688,10 +3250,38 @@ RECOMP_PATCH f32 func_global_asm_80689DD4(f32 x, f32 y, f32 z) {
 }
 
 // Nearest living Kong to an actor (used so that enemies target the closest player instead of always P1).
+// Kong who last picked up a golden banana, and when: the map-object scripts (prop controller actor) follow him while the banana's scenes run
+static u8 coop_cc_saved = 0; // cc_player_index while the prop controller runs
+static int coop_cc_swapped = 0;
+static int coop_gb_picker = -1;
+static u32 coop_gb_stamp = 0;
+#define COOP_GB_SCRIPT_TICKS 450 // (the Diddy / coconut switches scene of Japes starts ~150 ticks after the dance)
+// Golden banana dance: the Kong who did not pick it up is brought next to the picker by the cutscene glue (see the end of func_global_asm_8067889C);
+// his place is remembered at the pickup and he is put back there (same heading) once the dance scene is over.
+static int coop_gbtp_on = 0;
+static int coop_gbtp_who = 0;
+static u32 coop_gbtp_t = 0;
+static f32 coop_gbtp_x, coop_gbtp_y, coop_gbtp_z;
+static s16 coop_gbtp_ang;
+static int coop_gbtp_quiet = 0; // frames without cutscene since the pickup (the Diddy scene follows the dance within a few frames)
+static int coop_gbd_on = 0;     // a golden banana dance scene is running: pair centred on the pickup place
+static int coop_gbd_who = 0;    // the picker
+static f32 coop_gbd_x, coop_gbd_y, coop_gbd_z;
+static int coop_gbd_have = 0;   // the side vector below is fixed (it does not follow the heading any more once the dance has started)
+static f32 coop_gbd_sx, coop_gbd_sz;
+#define COOP_GBD_HALF 12.5f     // half the distance between the two dancers (flip the sign here if the pair ends up swapped / off-centre)
 static Actor *coop_nearest_kong(Actor *a) {
     Actor *best = NULL;
     f32 bestd = 0.0f;
     int k;
+    // The map-object scripts (the "prop controller" actor, which also starts their cutscenes) are written for player 0: they read gPlayerPointer.
+    // With the nearest Kong they saw the wrong one (e.g. the Diddy / coconut switches scene of Japes was never started when P1 picked the banana
+    // and P2, glued beside him, was the nearest). They follow P1, except for a while after P2 picked up a golden banana.
+    if (a->unk58 == ACTOR_PROP_CONTROLLER) {
+        Actor *p2_ = character_change_array[1].playerPointer;
+        if (coop_gb_picker == 1 && (u32)((u32)object_timer - coop_gb_stamp) < COOP_GB_SCRIPT_TICKS && character_change_array[1].does_player_exist && p2_ != NULL) return p2_;
+        return character_change_array[0].playerPointer;
+    }
     for (k = 0; k < 2; k++) {
         Actor *p = character_change_array[k].playerPointer;
         f32 dx, dy, dz, d;
@@ -2923,11 +3513,125 @@ extern u8 is_autowalking;
 extern f32 D_global_asm_80753218[];
 extern f32 D_global_asm_807531FC[];
 #define COOP_P_ENEMY 1 // enemies/other actors target the closest Kong
+extern GlobalASMStruct35 D_global_asm_807FBB70;
 static int coop_tgt_swapped = 0;
+// Player (0/1) the pad / trigger events of this frame were computed for (see func_global_asm_8062BAE4)
+static int coop_pad_owner = 0;
+extern u8 is_autowalking;
+extern u8 D_global_asm_807FC8B9;
+extern void func_global_asm_806A8158(void);
+extern void func_global_asm_806A5868(void);
+extern OSContPad D_global_asm_807ECD58;
+extern u16 newly_pressed_input_copy;
+extern u8 D_global_asm_807ECD08;
+extern volatile u8 D_global_asm_807467C4;
+// Raw pads as read from the controllers. The game zeroes the pads of the ports while the player is locked (cutscenes), but the
+// speech bubbles still read player 0's raw pad (copied before that), so P2 needs his raw pad too.
+static u16 coop_raw_btn[4];
+static u16 coop_raw_new[4];
+RECOMP_PATCH void func_global_asm_8060AC34(OSContPad *arg0) {
+    if (D_global_asm_807467C4 == 0) {
+        if (D_global_asm_807ECD08 != 0) {
+            int i;
+            osContGetReadData(arg0);
+            for (i = 0; i < 4; i++) {
+                coop_raw_new[i] = (u16)((coop_raw_btn[i] ^ arg0[i].button) & arg0[i].button);
+                coop_raw_btn[i] = arg0[i].button;
+            }
+        }
+    }
+    D_global_asm_807ECD08 = 0;
+}
+static int coop_dbg_prev[2];
+static int coop_pad_swap = 0; // 1 while func_global_asm_8062BAE4 runs the map scripts on behalf of P2
+int coop_pad_swap_now(void) { return coop_pad_swap; }
+// Gun switches (peanut / coconut... switches that open a door): the map scripts read P1's data (gPlayerPointer, Kong...).
+// coop_gun_owner = player (0/1) who owns the latest live gun projectile, coop_gun_tick = when it was seen,
+// coop_cs_noglue = the running cutscene started right after a shot (door scene): P2 is not teleported to P1.
+extern s16 D_global_asm_807F6240[];
+extern s32 func_global_asm_80659470(s32 arg0);
+extern Prop *D_global_asm_807F6000;
+static int coop_gun_owner = -1;
+static u32 coop_gun_clock = 0; // own frame counter (object_timer is not monotonic)
+static u32 coop_gun_tick = 0;
+static int coop_cs_noglue = 0;
+static int coop_cs_prev_active = 0;
+// called by playCutscene: a cutscene that starts right after a shot of P2 (switch door) keeps P2 as script owner for a while
+extern s16 D_global_asm_807FDCB8; // zone position (x) used by the loading zone walk
+extern s16 D_global_asm_807FDCBC; // (z)
+// called when a cutscene starts: world door scene (30 = going in): the Kong that is running (state 13) while the other stands walked in
+void coop_door_pre(int idx, Actor *door) {
+    if ((idx == 30 || idx == 28) && coop_active_here() && character_change_array != NULL && character_change_array[1].does_player_exist
+        && character_change_array[0].playerPointer != NULL && character_change_array[1].playerPointer != NULL) {
+        Actor *k0 = character_change_array[0].playerPointer, *k1 = character_change_array[1].playerPointer;
+        if (door != NULL && door != k0 && door != k1) {
+            // main criterion: the Kong that is the closest to the door actor is the one who walked into it (log: 157 vs 193926, 302 vs 297098)
+            f32 d0 = SQ(k0->x_position - door->x_position) + SQ(k0->z_position - door->z_position);
+            f32 d1 = SQ(k1->x_position - door->x_position) + SQ(k1->z_position - door->z_position);
+            coop_door_trig = (d1 < d0) ? 1 : 0;
+            coop_door_trig_t = coop_gun_clock;
+        } else if (coop_dbg_st[1] == 13 && coop_dbg_st[0] != 13) { coop_door_trig = 1; coop_door_trig_t = coop_gun_clock; }
+        else if (coop_dbg_st[0] == 13 && coop_dbg_st[1] != 13) { coop_door_trig = 0; coop_door_trig_t = coop_gun_clock; }
+    }
+}
+int coop_cs_notify(int idx) {
+    if (coop_active_here() && idx != 21 && coop_gun_owner == 1 && coop_gun_tick != 0 && coop_gun_clock + 1 - coop_gun_tick < 240) {
+        return 1; // the cutscene (subject NULL = P1) is played for the Kong who shot
+    }
+    return 0;
+}
+#define COOP_GUN_START 240
 RECOMP_PATCH void func_global_asm_8067889C(u8 arg0) {
     // Co-op: the autowalk sets the Kong's max walking speed (unk38) to the fast autowalk value and only the Kong
     // that goes through a state change gets it reset. A Kong spawned/triggered during an autowalk (P2) kept running
     // at that speed afterwards until it jumped/punched. Reset it once the autowalk is over.
+    // Bonus barrel played by P2 (single-player map): the game reads controller 1 for the player, so the two controllers are swapped
+    if (arg0 == 1 && coop_mg_swapped && !coop_map_allowed()) {
+        OSContPad tp = D_global_asm_807ECD10[0];
+        u16 tn = newly_pressed_input[0];
+        if ((D_global_asm_807ECDF8 & 3) != (D_global_asm_807ECD09 & 3)) func_global_asm_8060AA58(3);
+        D_global_asm_807ECD10[0] = D_global_asm_807ECD10[1];
+        D_global_asm_807ECD10[1] = tp;
+        newly_pressed_input[0] = newly_pressed_input[1];
+        newly_pressed_input[1] = tn;
+    }
+    if (arg0 == 1 && coop_active_here() && character_change_array != NULL) {
+        Actor *gc0 = character_change_array[0].playerPointer;
+        coop_gun_clock++;
+        {
+            int ti;
+            for (ti = 0; ti < 2; ti++) {
+                Actor *tk = character_change_array[ti].playerPointer;
+                if (tk != NULL) {
+                    int ts = (int)tk->control_state;
+                    if (ts != coop_dbg_st[ti]) { coop_dbg_prev[ti] = coop_dbg_st[ti]; coop_dbg_st[ti] = ts; }
+                }
+            }
+            // world door swirl (state 135 for both): the Kong that walked in was in state 13 just before, the other one in state 12
+            if (coop_dbg_st[0] == 135 && coop_dbg_st[1] == 135 && (coop_dbg_prev[0] == 13) != (coop_dbg_prev[1] == 13) && coop_door_trig < 0) { coop_door_trig = (coop_dbg_prev[1] == 13) ? 1 : 0; coop_door_trig_t = coop_gun_clock; }
+            else if (coop_dbg_st[0] != 135 && coop_dbg_st[1] != 135 && coop_door_trig >= 0 && (u32)(coop_gun_clock - coop_door_trig_t) > 120) coop_door_trig = -1;
+        }
+        Actor *gc1 = character_change_array[1].playerPointer;
+        int gi;
+        for (gi = 0; gi < D_global_asm_807FBB34; gi++) {
+            Actor *ga = D_global_asm_807FB930[gi].unk0;
+            if (ga != NULL && (ga->unk58 == ACTOR_PROJECTILE_PEANUT || ga->unk58 == ACTOR_PROJECTILE_COCONUTS || ga->unk58 == ACTOR_PROJECTILE_GRAPE
+                || ga->unk58 == ACTOR_PROJECTILE_PINEAPPLE || ga->unk58 == ACTOR_PROJECTILE_FEATHER)) {
+                if (ga->unk11C != NULL && ga->unk11C == gc1) { coop_gun_owner = 1; coop_gun_tick = coop_gun_clock + 1; }
+                else if (ga->unk11C != NULL && ga->unk11C == gc0) { coop_gun_owner = 0; coop_gun_tick = coop_gun_clock + 1; }
+            }
+        }
+        if (coop_cs_noglue && is_cutscene_active != 0) coop_gun_tick = coop_gun_clock + 1; // door scene: window counts from its end
+        if (is_cutscene_active == 0) {
+            coop_cs_prev_active = 0;
+            coop_cs_noglue = 0;
+        } else if (!coop_cs_prev_active) {
+            coop_cs_prev_active = 1;
+            coop_cs_noglue = (coop_gun_tick != 0 && coop_gun_clock + 1 - coop_gun_tick < COOP_GUN_START) ? 1 : 0;
+        }
+    } else if (arg0 == 1 && !coop_active_here()) {
+        coop_cs_noglue = 0; coop_cs_prev_active = 0; coop_gun_tick = 0;
+    }
     if (arg0 == 1 && coop_active_here() && character_change_array != NULL && is_autowalking != 3) {
         int pi;
         for (pi = 0; pi < 2; pi++) {
@@ -2941,12 +3645,133 @@ RECOMP_PATCH void func_global_asm_8067889C(u8 arg0) {
             }
         }
     }
+    // Training Grounds: once the intro is over (60 frames without cutscene), P2 is never glued to P1 (Cranky's lab, barrels)
+    static int tg_calm = 0;
+    if (arg0 == 1) {
+        if (current_map != MAP_TRAINING_GROUNDS) { tg_calm = 0; }
+        else if (is_cutscene_active != 0) tg_calm = 0;
+        else if (tg_calm < 60) tg_calm++;
+        if (tg_calm >= 60) coop_tg_free = 1;
+    }
+    // DK Isles arrival scene: ends when no cutscene nor walk has run for a while (the fullscreen then fades back to the split screen)
+    if (arg0 == 1 && coop_isles_scene) {
+        if (coop_active_here() && current_map == coop_isles_map) {
+            coop_isles_t++;
+            // busy: cutscene, forced walk or cinematic bars (the game's own "controls locked" test); Klumsy's sequence has long pauses between scenes
+            if (is_cutscene_active != 0 || is_autowalking == 3 || !func_global_asm_805FCA64()) { coop_isles_seen = 1; coop_isles_idle = 0; }
+            else coop_isles_idle++;
+            if (is_cutscene_active != 0) coop_isles_cs = 1;
+            if (coop_isles_idle > ((coop_isles_trip && coop_isles_cs && !coop_isles_ret) ? 240 : 45) || coop_isles_t > 7200) coop_isles_scene = 0;
+        } else if (current_map != coop_isles_from) {
+            coop_isles_scene = 0;
+        }
+    }
+    // back from Cranky's lab / a barrel: no teleport of the player who stayed (the cutscene scripts move player 0 to the exit)
+    if (arg0 == 1 && coop_tg_hold && coop_active_here() && current_map == coop_tg_map && character_change_array != NULL) {
+        Actor *hk = character_change_array[coop_tg_stayer].playerPointer;
+        int busy = (is_cutscene_active != 0 || is_autowalking == 3);
+        int moved = (D_global_asm_807ECD10[coop_tg_stayer].button != 0 || D_global_asm_807ECD10[coop_tg_stayer].stick_x > 30 || D_global_asm_807ECD10[coop_tg_stayer].stick_x < -30
+            || D_global_asm_807ECD10[coop_tg_stayer].stick_y > 30 || D_global_asm_807ECD10[coop_tg_stayer].stick_y < -30);
+        coop_tg_hold_t++;
+        if (hk == NULL || (!busy && coop_tg_hold_t > 120 && moved) || coop_tg_hold_t > 3600) {
+            coop_tg_hold = 0; // scene over and the player takes the controls (or safety limit)
+        } else if (busy || coop_tg_hold_t <= 30) {
+            hk->x_position = coop_tg_x;
+            hk->y_position = coop_tg_y;
+            hk->z_position = coop_tg_z;
+        }
+    }
+    // the centred placement of the dance only lasts for the dance cutscene (not for the scene that follows it)
+    if (arg0 == 1 && coop_gbd_on && is_cutscene_active == 0 && (u32)((u32)object_timer - coop_gbtp_t) > 30) coop_gbd_on = 0;
+    // golden banana dance over: the Kong who was brought to the picker goes back where he was
+    if (arg0 == 1 && coop_gbtp_on && coop_active_here() && character_change_array != NULL) {
+        Actor *tq = character_change_array[coop_gbtp_who].playerPointer;
+        u32 el = (u32)object_timer - coop_gbtp_t;
+        if (is_cutscene_active != 0) coop_gbtp_quiet = 0; else coop_gbtp_quiet++;
+        // phases: 1 = dance running, 2 = sent back, a following scene (Diddy's, 3 coconut switches) may still glue him to P1 again,
+        // 3 = that scene is running: he is sent back once more when it is over
+        if (tq == NULL || el > 1200 || (coop_gbtp_on == 2 && el > 700)) {
+            coop_gbtp_on = 0;
+        } else if (coop_gbtp_on == 2) {
+            if (is_cutscene_active != 0) coop_gbtp_on = 3;
+        } else if (el > 30 && coop_gbtp_quiet > 15 && (coop_gbtp_on == 3 || tq->control_state != 0x70)) {
+            tq->x_position = coop_gbtp_x;
+            tq->y_position = tq->unkA0 = coop_gbtp_y;
+            tq->z_position = coop_gbtp_z;
+            tq->y_rotation = tq->unkEE = coop_gbtp_ang;
+            tq->y_velocity = 0.0f;
+            coop_gbtp_on = (coop_gbtp_on == 1) ? 2 : 0;
+        }
+    }
+    int tg_noglue = (current_map == MAP_TRAINING_GROUNDS && coop_tg_free);
     // Entrance cutscene / autowalk: P2 has no autowalk and would stand in the door (exit loading zone) while
     // the user can walk him out of the level. Keep P2 glued next to P1 until P1 regains control.
     if (arg0 == 1 && coop_active_here() && character_change_array != NULL) {
         Actor *c0 = character_change_array[0].playerPointer;
-        if (coop_cannon_cam_saved != NULL && is_cutscene_active == 0) { D_global_asm_807F5D10 = coop_cannon_cam_saved; coop_cannon_cam_saved = NULL; }
+        if (coop_cannon_cam_saved != NULL && (is_cutscene_active == 0 || coop_cannon_cam_map != (int)current_map)) { if (coop_cannon_cam_map == (int)current_map) D_global_asm_807F5D10 = coop_cannon_cam_saved; coop_cannon_cam_saved = NULL; }
         Actor *c1 = character_change_array[1].playerPointer;
+        if (coop_arena_back > 0) {
+            coop_arena_back--;
+            if (c0 && character_change_array[1].playerPointer && coop_arena_back <= 30) { // (the first ticks: P1 is still being placed by the exit)
+                Actor *q = character_change_array[1].playerPointer;
+                s16 aa = (s16)c0->y_rotation;
+                q->x_position = c0->x_position + func_global_asm_80612794(aa + 0x400) * 25.0f;
+                q->z_position = c0->z_position + func_global_asm_80612790(aa + 0x400) * 25.0f;
+                q->y_position = q->unkA0 = c0->y_position;
+                q->y_rotation = q->unkEE = aa;
+            }
+        }
+        // P2 walks out of a door: the exit scripts move P1 along the same path (his swirl), he must not stand in P2's way
+        static int door_walk_was = 0;
+        int door_walking = 0;
+        if (c0 && c1 && is_autowalking == 3 && (current_map != MAP_TRAINING_GROUNDS || coop_tg_cave) && !(coop_tg_hold && current_map == coop_tg_map)) { // (TG: the cave from DK Isles, not the lab / barrel exits)
+            if (coop_door_ret1 > 0 && D_global_asm_807FD710 == c0) door_walking = 1; // (the walk always belongs to P1; P2 runs beside him)
+        }
+        // (one more alignment after the walk: the walker still glides a few frames, the other one would stay behind)
+        if (door_walking) door_walk_was = 12;
+        else if (door_walk_was > 0) { door_walk_was--; if (coop_raw_btn[1] != 0) door_walk_was = 0; }
+        // Hott&Stroff door, exit towards the world: P1 walks out alone; P2 copies nothing (no heading, no side, not glued): he is just put on the ground
+        // outside the door, 40 units to the side of the exit point, and kept there until the exit is over (else the two Kongs walk back into the door)
+        if (c0 && c1 && COOP_HS_EXIT && (door_walking || door_walk_was > 0 || is_cutscene_active != 0 || is_autowalking == 3)) {
+            // (12.5 to his left of the exit point: P1 is shifted 12.5 to its right (ent_shift), so they are 25 apart and the pair is centred, like the other doors / caves; he is also put COOP_HS_AHEAD units in front of the door: the wall left of the door held him)
+            c1->x_position = coop_door_ex + func_global_asm_80612794(coop_door_ang + 0x400) * COOP_ENTRY_CENTER + func_global_asm_80612794(coop_door_ang) * COOP_HS_AHEAD;
+            c1->y_position = c0->y_position;
+            c1->z_position = coop_door_ez + func_global_asm_80612790(coop_door_ang + 0x400) * COOP_ENTRY_CENTER + func_global_asm_80612790(coop_door_ang) * COOP_HS_AHEAD;
+            c1->y_rotation = c1->unkEE = coop_door_ang + COOP_HS_TURN; // facing away from the door (COOP_HS_TURN 0x800 if he faces the door)
+        }
+        if (c0 && c1 && !COOP_HS_EXIT && (door_walking || (door_walk_was > 0 && coop_door_ret1 > 0))) {
+            Actor *wk = c0; // walker (P1); the other Kong is kept beside him
+            Actor *ot = c1;
+            // (not during the swirl: both Kongs spin side by side like in the original)
+            if (coop_door_hs && ot->control_state == 136) {
+                // Hott&Stroff, P1 walks: the swirl sends P2 to the center of the door, which touches it again (loop). He stays at the exit point's side instead.
+                ot->x_position = coop_door_ex + func_global_asm_80612794(coop_door_ang + 0x400) * 40.0f;
+                ot->y_position = wk->y_position;
+                ot->z_position = coop_door_ez + func_global_asm_80612790(coop_door_ang + 0x400) * 40.0f;
+            } else
+            // (swirl out, P2 walking: P1 is pinned beside him from the first frame to the end, seen from the exit angle since P2 spins on the spot)
+            if (ot->control_state != 135 && ot->control_state != 136) {
+                s16 ra = (ot->control_state == 136) ? coop_door_ang : (s16)wk->y_rotation;
+                f32 dsd = 25.0f; // same side whoever walks: J2 stands at J1's left, and J1 at J2's left
+                f32 sx = func_global_asm_80612794(ra + 0x400) * dsd, sz = func_global_asm_80612790(ra + 0x400) * dsd; // always the same side (the one of the placement), no flipping
+                ot->x_position = wk->x_position + sx;
+                ot->y_position = wk->y_position;
+                ot->z_position = wk->z_position + sz;
+                ot->y_rotation = wk->y_rotation; ot->unkEE = wk->y_rotation; // same heading as the walker (else he keeps the heading of the way in and runs toward the exit)
+            }
+        }
+        // P2 walks into a door (swirl in, state 135 for both): the game sends both Kongs to the same point, P1 would turn inside P2.
+        // He is kept at P2's right (25 units, side fixed when the swirl starts, P2 spins on the spot).
+        {
+            static int dep_on = 0;
+            static s16 dep_ra = 0;
+            if (c0 && c1 && coop_door_trig == 1 && current_map != MAP_TRAINING_GROUNDS && c0->control_state == 135 && c1->control_state == 135) {
+                if (!dep_on) { dep_ra = (s16)c1->y_rotation; dep_on = 1; }
+                c0->x_position = c1->x_position + func_global_asm_80612794(dep_ra + 0x400) * 25.0f;
+                c0->y_position = c1->y_position;
+                c0->z_position = c1->z_position + func_global_asm_80612790(dep_ra + 0x400) * 25.0f;
+            } else dep_on = 0;
+        }
         if (c1) {   // Japes cannon, P2 as the user. The launch (upward speed) is not given to P2 by the game, and P2 is dropped
             // out of the flight state (0x45 -> 0x1E) about every 20 frames while P1 keeps it until it lands. Log of P1 (works):
             // first frame of state 0x45 has y_velocity = 812, speed 206 (-1 per frame), flag unk64 = 0x80.
@@ -3002,6 +3827,69 @@ RECOMP_PATCH void func_global_asm_8067889C(u8 arg0) {
             }
             cn_prev1 = st1;
         }
+        if (c1 && current_map != MAP_JAPES_ARMY_DILLO && current_character_index[1] <= 4) {
+            coop_p2_kong_mem = current_character_index[1];
+        }
+        // Door / lobby entry and exit "autowalk": the game only simulates the pad of player 0; the other pads keep their last
+        // value, so P2 kept walking where his stick pointed just before the door. P2 repeats P1's autowalk input instead.
+        if (character_change_array[0].unk294 == &coop_zero_pad && !(is_autowalking == 3 && D_global_asm_807FD710 == c1)) {
+            character_change_array[0].unk294 = &D_global_asm_807ECD10[0];
+        }
+        if (c0 && c1 && is_autowalking == 3 && D_global_asm_807FD710 == c1) {
+            // P2 is the one who walks (he entered / leaves a lab...): the autowalk simulates the pad of port 0, P2 takes it and P1 stands still
+            if (character_change_array[0].unk294 != NULL && character_change_array[1].unk294 != NULL) {
+                // (Klumsy: the walk path also presses buttons: the roll. P2 gets them too)
+                character_change_array[1].unk294->button = (current_map == MAP_KLUMSY) ? D_global_asm_807ECD10[0].button : 0;
+                character_change_array[1].unk294->stick_x = D_global_asm_807ECD10[0].stick_x;
+                character_change_array[1].unk294->stick_y = D_global_asm_807ECD10[0].stick_y;
+                // P1 stands still: he reads a neutral pad (the autowalk's pad 0 must stay untouched, its stick ramps up from its own previous value)
+                // (door / cave / lobby between two co-op maps: P1 repeats the walk too, like P2 does when P1 walks; he stays beside P2, see below)
+                character_change_array[0].unk294 = &coop_zero_pad;
+            }
+            if (character_change_array[1].new_controller_inputs != NULL) character_change_array[1].new_controller_inputs->button = (current_map == MAP_KLUMSY) ? newly_pressed_input[0] : 0;
+        } else if (c0 && c1 && is_autowalking == 3 && !tg_noglue) {
+            if (character_change_array[0].unk294 != NULL && character_change_array[1].unk294 != NULL) {
+                character_change_array[1].unk294->button = (current_map == MAP_KLUMSY) ? character_change_array[0].unk294->button : 0;
+                character_change_array[1].unk294->stick_x = character_change_array[0].unk294->stick_x;
+                character_change_array[1].unk294->stick_y = character_change_array[0].unk294->stick_y;
+            }
+            if (character_change_array[1].new_controller_inputs != NULL) {
+                character_change_array[1].new_controller_inputs->button = (current_map == MAP_KLUMSY) ? newly_pressed_input[0] : 0;
+            }
+        }
+        // Training Grounds cave (from DK Isles): the common door walk logic (P2 beside the walker, same heading, see door_walking above) applies
+        // while the walk lasts; this only tells when it is over
+        if (current_map == MAP_TRAINING_GROUNDS && coop_tg_cave) {
+            if (is_autowalking == 3) {
+                coop_tg_cave_on = 1;
+            } else if (coop_tg_cave_on) {
+                coop_tg_cave = 0;
+                coop_tg_cave_on = 0;
+            }
+        } else if (current_map != MAP_TRAINING_GROUNDS && current_map != MAP_DK_ISLES_OVERWORLD) {
+            coop_tg_cave = 0;
+            coop_tg_cave_on = 0;
+        }
+        // Japes arrival cutscene (18): it ends before the parrot's last lines. Like in the original game nobody moves until the speech bubble is
+        // gone; the bubble reads its own pad copy (P1 can still skip / advance the text), so only the movement pads are neutralised.
+        if (current_map != MAP_JAPES) coop_jp18 = 0;
+        else if (is_cutscene_active == 1 && D_global_asm_807476F4 == 18) coop_jp18 = 1;
+        else if (coop_jp18 && is_cutscene_active == 0 && ((int)object_timer < coop_txt_last || (int)object_timer - coop_txt_last > 3)) coop_jp18 = 0; // cutscene over and no bubble left
+        if (c0 && c1 && coop_jp18 && (int)object_timer >= coop_txt_last && (int)object_timer - coop_txt_last <= 3) {
+            int jk_;
+            for (jk_ = 0; jk_ < 2; jk_++) {
+                if (character_change_array[jk_].unk294 != NULL) {
+                    character_change_array[jk_].unk294->button = 0;
+                    character_change_array[jk_].unk294->stick_x = 0;
+                    character_change_array[jk_].unk294->stick_y = 0;
+                }
+                if (character_change_array[jk_].new_controller_inputs != NULL) character_change_array[jk_].new_controller_inputs->button = 0;
+            }
+        }
+        // P2's glue to P1 during cutscenes: at P1's side while a forced walk runs and until the cutscene ends, else at a fixed world offset
+        if (is_autowalking == 3) coop_glue_side = 1;
+        else if (is_cutscene_active == 0) coop_glue_side = 0;
+        if (is_cutscene_active == 0) coop_cs_trig = -1;
         if (c0 && c1 && coop_barrel_chooser_now() >= 0) {
             // tag barrel selection: the other Kong stays where it is (no teleport), it just cannot move
             int oi = (coop_barrel_chooser_now() == 1) ? 0 : 1;
@@ -3014,22 +3902,77 @@ RECOMP_PATCH void func_global_asm_8067889C(u8 arg0) {
             if (character_change_array[oi].new_controller_inputs != NULL) {
                 character_change_array[oi].new_controller_inputs->button = 0;
             }
-        } else if (c0 && c1 && (coop_cannon_user() >= 0 || (is_cutscene_active != 0 && current_map == MAP_JAPES && D_global_asm_807476F4 == 22))) {
+        } else if (c0 && c1 && (coop_cannon_user() >= 0 || (is_cutscene_active != 0 && current_map == MAP_JAPES && D_global_asm_807476F4 == 22) || (is_cutscene_active != 0 && (coop_barrel_user() == 1 || coop_enter_user() == 1)))) {
             // Japes cannon: no glue of P2 next to P1. The cutscene (camera actor D_global_asm_807F5D10, subject
             // D_global_asm_807F5CE8) is bound to P2's own camera when P2 uses the cannon, so P1's screen is untouched.
-            if (is_cutscene_active != 0 && coop_cannon_user() == 1) {
+            if (is_cutscene_active != 0 && (coop_cannon_user() == 1 || coop_barrel_user() == 1 || coop_enter_user() == 1)) {
                 Actor *cam1 = ((PlayerAdditionalActorData *)c1->PaaD)->unk104;
                 if (cam1 != NULL && D_global_asm_807F5D10 != cam1) {
                     coop_cannon_cam_saved = D_global_asm_807F5D10;
+                    coop_cannon_cam_map = (int)current_map;
                     D_global_asm_807F5D10 = cam1;
                 }
                 if (D_global_asm_807F5CE8 == c0) D_global_asm_807F5CE8 = c1;
+                // Klumsy: the cutscene turns P1 (player 0); P2, standing beside him, keeps the same heading (otherwise he ends up facing away)
+                if (current_map == MAP_KLUMSY && coop_isles_scene) {
+                    f32 kdx = c1->x_position - c0->x_position, kdz = c1->z_position - c0->z_position;
+                    // (last scene: the map is reloaded and P2 is put at the exit while the scene puts P1 elsewhere: P2 is brought beside him)
+                    if (kdx * kdx + kdz * kdz > 6400.0f) {
+                        c1->x_position = c0->x_position + 25.0f;
+                        c1->y_position = c0->y_position;
+                        c1->z_position = c0->z_position;
+                    }
+                    c1->y_rotation = c0->y_rotation; c1->unkEE = c0->y_rotation;
+                }
             }
-        } else if (c0 && c1 && (c0->control_state == 0x88 || is_cutscene_active != 0) && !coop_death_cam() && !coop_barrel_sel) {
-            c1->x_position = c0->x_position + 25.0f;
+        } else if (c0 && c1 && is_cutscene_active == 1 && D_global_asm_807F5CE8 == c1 && c0->control_state != 0x88 && !coop_cs_noglue && !tg_noglue && !coop_death_cam() && !coop_barrel_sel && coop_feeder_query() != 1 && coop_cs_trig < 0 && !COOP_HS_EXIT) {
+            // cutscene whose subject is P2 (golden banana dance of P2...): P1 joins P2, not the other way round
+            c0->x_position = c1->x_position + 25.0f;
+            c0->y_position = c1->y_position;
+            c0->z_position = c1->z_position;
+            c0->y_rotation = c1->y_rotation;
+        } else if (c0 && c1 && (c0->control_state == 0x88 || (is_cutscene_active != 0 && !coop_cs_noglue)) && !tg_noglue && !coop_death_cam() && !coop_barrel_sel && coop_feeder_query() != 1 && coop_cs_trig < 0 && !COOP_HS_EXIT) {
+            if (current_map == MAP_KLUMSY || coop_glue_side) {
+                // P1 runs (walk of a door / cave / Klumsy...): P2 follows at P1's side, not at a fixed world offset (that put him in front of
+                // P1 depending on the direction, they bumped each other). The side is kept until the end of the cutscene (no jump).
+                c1->x_position = c0->x_position + func_global_asm_80612794((s16)c0->y_rotation + 0x400) * 25.0f;
+                c1->z_position = c0->z_position + func_global_asm_80612790((s16)c0->y_rotation + 0x400) * 25.0f;
+                c1->unkEE = c0->y_rotation;
+            } else {
+                c1->x_position = c0->x_position + 25.0f;
+                c1->z_position = c0->z_position;
+            }
             c1->y_position = c0->y_position;
-            c1->z_position = c0->z_position;
             c1->y_rotation = c0->y_rotation;
+        }
+        // Golden banana dance scene: the pair stands side by side across the camera (the side is perpendicular to the heading, which faces the
+        // camera), centred on the place where the banana was picked up (the scene camera looks at that point): picker half a step one way,
+        // the other Kong half a step the other way.
+        if (coop_gbd_on && is_cutscene_active != 0 && c0 && c1) {
+            u32 gel = (u32)object_timer - coop_gbtp_t;
+            Actor *gpk = character_change_array[coop_gbd_who].playerPointer;
+            Actor *got = character_change_array[1 - coop_gbd_who].playerPointer;
+            if (gpk == NULL || got == NULL || gel > 300) {
+                coop_gbd_on = 0;
+            } else {
+                s16 gaa = (s16)gpk->y_rotation;
+                // the side is taken from the heading while the dance starts, then kept until the end of the scene (when the dance is over the
+                // glue of the cutscene would otherwise put the other Kong on the opposite side)
+                if (!coop_gbd_have) {
+                    coop_gbd_sx = func_global_asm_80612794(gaa + 0x400) * COOP_GBD_HALF;
+                    coop_gbd_sz = func_global_asm_80612790(gaa + 0x400) * COOP_GBD_HALF;
+                    if (gel >= 25 || gpk->control_state == 0x70) coop_gbd_have = 1;
+                }
+                f32 gsx = coop_gbd_sx;
+                f32 gsz = coop_gbd_sz;
+                gpk->x_position = coop_gbd_x - gsx;
+                gpk->z_position = coop_gbd_z - gsz;
+                got->x_position = coop_gbd_x + gsx;
+                got->z_position = coop_gbd_z + gsz;
+                gpk->y_position = gpk->unkA0 = coop_gbd_y;
+                got->y_position = got->unkA0 = coop_gbd_y;
+                got->y_rotation = got->unkEE = gaa;
+            }
         }
     }
     for (D_global_asm_807FBB3C = 0; D_global_asm_807FBB3C < D_global_asm_807FBB34; D_global_asm_807FBB3C++) {
@@ -3045,12 +3988,74 @@ RECOMP_PATCH void func_global_asm_8067889C(u8 arg0) {
                     gPlayerPointer = near_;
                     coop_tgt_swapped = 1;
                 }
+                // Training Grounds, scene after the last barrel / the lab: the parrot appears in front of the Kong who came back (P2 if he did)
+                {
+                    int sq_ = gCurrentActorPointer->unk58;
+                    if (current_map == MAP_TRAINING_GROUNDS && is_cutscene_active != 0 && character_change_array[1].playerPointer != NULL
+                        && (coop_enter_user() == 1 || (coop_tg_hold && coop_tg_stayer == 0))
+                        && (sq_ == ACTOR_SQUAWKS || sq_ == ACTOR_SQUAWKS_0 || sq_ == ACTOR_SQUAWKS_1 || sq_ == ACTOR_SQUAWKS_2)) {
+                        gPlayerPointer = character_change_array[1].playerPointer;
+                        coop_tgt_swapped = 1;
+                    }
+                    // DK Isles arrival scene: the parrot talks to the Kong who walked out of the Training Grounds
+                    if (coop_isles_scene && current_map == coop_isles_map && is_cutscene_active != 0 && character_change_array[coop_isles_who].playerPointer != NULL
+                        && (sq_ == ACTOR_SQUAWKS || sq_ == ACTOR_SQUAWKS_0 || sq_ == ACTOR_SQUAWKS_1 || sq_ == ACTOR_SQUAWKS_2)) {
+                        gPlayerPointer = character_change_array[coop_isles_who].playerPointer;
+                        coop_tgt_swapped = 1;
+                    }
+                }
+            }
+            // The prop controller (map-object scripts) also reads data of the player given by cc_player_index (progress counters...): the player it follows
+            if (coop_active_here() && gCurrentActorPointer->unk58 == ACTOR_PROP_CONTROLLER) {
+                coop_cc_saved = cc_player_index;
+                cc_player_index = (gPlayerPointer == character_change_array[1].playerPointer && character_change_array[1].does_player_exist) ? 1 : 0;
+                coop_cc_swapped = 1;
             }
             func_global_asm_80678BBC(gCurrentActorPointer);
-            D_global_asm_8074C0A0[gCurrentActorPointer->unk58]();
+            {
+                // Troff 'n' Scoff circle (pad event type 3): only the Kong the event was computed for may react to it
+                // (P1's update used to take P2's event and start the feeding on P1 with a bad pad position).
+                int gate_ = 0;
+                int who_ = -1;
+                __typeof__(D_global_asm_807FBB70.unk2) gate_saved_ = 0;
+                if (character_change_array[0].playerPointer == gCurrentActorPointer) {
+                    who_ = 0;
+                } else if (character_change_array[1].does_player_exist && character_change_array[1].playerPointer == gCurrentActorPointer) {
+                    who_ = 1;
+                }
+                if (coop_active_here() && current_map == MAP_TROFF_N_SCOFF && who_ >= 0
+                    && D_global_asm_807FBB70.unk2 != 0 && D_global_asm_807FBB70.unk14 == 3 && who_ != coop_pad_owner) {
+                    gate_saved_ = D_global_asm_807FBB70.unk2;
+                    D_global_asm_807FBB70.unk2 = 0;
+                    gate_ = 1;
+                }
+                // Speech bubbles (text clouds of cutscenes / mini-games): B skips, A speeds up, Z slows down. They read the pad of
+                // player 0 only. When the scene belongs to P2 the bubble reads his pad instead.
+                OSContPad tx_pad_ = D_global_asm_807ECD58;
+                u16 tx_new_ = newly_pressed_input_copy;
+                int tx_swap_ = 0;
+                if ((void *)D_global_asm_8074C0A0[gCurrentActorPointer->unk58] == (void *)func_global_asm_806A5868) {
+                    int src_ = -1;
+                    if (coop_jp18 && current_map == MAP_JAPES) coop_txt_last = (int)object_timer; // a speech bubble is alive
+                    if (coop_mg_swapped && !coop_map_allowed()) src_ = 0; // barrel mini-game played by P2: his pad was moved into port 0
+                    else if (coop_active_here() && character_change_array[1].does_player_exist && is_cutscene_active != 0
+                        && ((D_global_asm_807F5CE8 != NULL && D_global_asm_807F5CE8 == character_change_array[1].playerPointer) || coop_cs_trig == 1)) src_ = 1;
+                    if (src_ >= 0) {
+                        D_global_asm_807ECD58.button = coop_raw_btn[1];
+                        newly_pressed_input_copy = coop_raw_new[1];
+                        tx_swap_ = 1;
+                    }
+                }
+                D_global_asm_8074C0A0[gCurrentActorPointer->unk58]();
+                if (tx_swap_) { D_global_asm_807ECD58 = tx_pad_; newly_pressed_input_copy = tx_new_; }
+                if (gate_) {
+                    D_global_asm_807FBB70.unk2 = gate_saved_;
+                }
+            }
             
             
             func_global_asm_80678CC8(gCurrentActorPointer);
+            if (coop_cc_swapped) { cc_player_index = coop_cc_saved; coop_cc_swapped = 0; }
             if (coop_tgt_swapped) {
                 gPlayerPointer = character_change_array[0].playerPointer; // back to P1
                 coop_tgt_swapped = 0;
@@ -3075,6 +4080,52 @@ extern u8 D_global_asm_807F5FED;
 static u32 coop_seg2[2][2][0x240 / 4] __attribute__((aligned(16)));
 static void *coop_frame_hdr = NULL; // frame header (segment 2) of the current frame, used by the P2 HUD
 static u32 coop_hud_seg2[2][2][0x240 / 4] __attribute__((aligned(16))); // [player][frame]
+
+// ---- Story co-op: pause menu drawn in the half of the screen of the player who pressed START ----
+// The menu draws with the full-screen HUD ortho (segment 2 + 0xC0, 1/4 px units, 1280 x 960). Its pieces call
+// func_global_asm_806A921C first; there segment 2 is pointed to a copy of the frame header whose ortho is scaled by 0.5 (uniform,
+// so nothing is stretched) and placed in the middle of the pauser's half, and the scissor is limited to that half. The end of
+// each menu piece calls coop_pause_half_end to put everything back.
+static u32 coop_pause_seg2[2][2][0x240 / 4] __attribute__((aligned(16))); // [half][frame]
+static int coop_pause_half_active = 0;
+static int coop_pause_other = 0; // 1: set up the half of the player who did NOT pause ("EN PAUSE" caption)
+void coop_pause_set_other(int on) { coop_pause_other = on; }
+void *coop_pause_half(int *rect, f32 xk) {
+    u32 *buf;
+    u32 *src;
+    int k, pl;
+    coop_pause_half_active = 0;
+    if (!coop_active_here() || !(global_properties_bitfield & 2) || coop_frame_hdr == NULL || !coop_vp_saved
+        || !character_change_array[1].does_player_exist) return NULL;
+    pl = (D_global_asm_807FC8B9 & 1) ^ (coop_pause_other ? 1 : 0);
+    buf = coop_pause_seg2[pl][D_global_asm_807444FC & 1];
+    src = (u32 *)coop_frame_hdr;
+    for (k = 0; k < 0x240 / 4; k++) buf[k] = src[k];
+    if (pl == 0) {
+        guOrtho((Mtx *)&buf[0xC0 / 4], 639.0f - 1279.0f * xk, 639.0f + 1279.0f * xk, 1918.0f, 0.0f, -20000.0f, 20000.0f, 1.0f);
+    } else {
+        guOrtho((Mtx *)&buf[0xC0 / 4], 639.0f - 1279.0f * xk, 639.0f + 1279.0f * xk, 958.0f, -960.0f, -20000.0f, 20000.0f, 1.0f);
+    }
+    for (k = 0; k < 4; k++) rect[k] = coop_vp_rect[pl][k];
+    coop_pause_half_active = 1;
+    return buf;
+}
+int coop_pause_half_on(void) { return coop_pause_half_active; }
+// 1 while the pause menu is shown in the half of the pauser's screen (used by the sprite update)
+int coop_pause_half_wanted(void) {
+    return coop_active_here() && (global_properties_bitfield & 2) && coop_frame_hdr != NULL && coop_vp_saved
+        && character_change_array[1].does_player_exist;
+}
+void *coop_frame_hdr_get(void) { return coop_frame_hdr; }
+Gfx *coop_pause_half_end(Gfx *dl) {
+    if (coop_pause_half_active) {
+        gDPPipeSync(dl++);
+        gDPSetScissorFrac(dl++, G_SC_NON_INTERLACE, 0, 0, D_global_asm_80744490 * 4.0f, D_global_asm_80744494 * 4.0f);
+        gSPSegment(dl++, 0x02, osVirtualToPhysical(coop_frame_hdr));
+        coop_pause_half_active = 0;
+    }
+    return dl;
+}
 #define COOP_HP_SCALE 0.60f // size of the health bar (melons) in each split-screen half (1.0 = original)
 
 RECOMP_PATCH Gfx *func_global_asm_8062BF24(Gfx *dl, s32 arg1) {
@@ -3083,6 +4134,7 @@ RECOMP_PATCH Gfx *func_global_asm_8062BF24(Gfx *dl, s32 arg1) {
     s32 i;
     s32 ii;
 
+    coop_tr_update();
     coop_frame_hdr = (void *)arg1;
     func_global_asm_8062C1C0(arg1);
     gDPPipeSync(dl++);
@@ -3111,12 +4163,23 @@ RECOMP_PATCH Gfx *func_global_asm_8062BF24(Gfx *dl, s32 arg1) {
             character_change_array[i].unk278_arr[0] = 320;
             character_change_array[i].unk278_arr[1] = 240;
             character_change_array[i].unk280 = (320.0f / 240.0f);
+        } else if (coop_active_here() && i < 2 && coop_tr_player >= 0 && coop_vp_saved) {
+            // split-screen transition: the line between the two views moves from the full-screen edge to its final place
+            int y0 = (i == 0) ? 0 : coop_tr_split;
+            int y1 = (i == 0) ? coop_tr_split : 240;
+            character_change_array[i].unk270[0] = coop_vp_rect[i][0];
+            character_change_array[i].unk270[1] = y0;
+            character_change_array[i].unk270[2] = coop_vp_rect[i][2];
+            character_change_array[i].unk270[3] = y1;
+            character_change_array[i].unk278_arr[0] = coop_vp_rect[i][2] - coop_vp_rect[i][0];
+            character_change_array[i].unk278_arr[1] = y1 - y0;
+            character_change_array[i].unk280 = (f32)character_change_array[i].unk278_arr[0] / (f32)(y1 - y0);
         }
         if (character_change_array[i].does_player_exist) {
             u32 *coop_seg2_buf = NULL;
             cc_player_index = i;
             if (coop_active_here() && i < 2) {
-                coop_seg2_buf = coop_seg2[i][D_global_asm_807444FC & 1];
+                coop_seg2_buf =coop_seg2[i][D_global_asm_807444FC & 1];
                 gSPSegment(dl++, 0x02, osVirtualToPhysical(coop_seg2_buf));
             }
             int cs_ = (coop_active_here() && i < 2 && coop_death_cam()) ? 0 : i;
@@ -3210,6 +4273,20 @@ RECOMP_PATCH void func_global_asm_80722280(void) {
         if (coop_fullscreen_now() >= 0) {
             int ch_ = coop_fullscreen_now();
             character_change_array[ch_].unk280 = (320.0f / 240.0f);
+        }
+        // split-screen transition: the projection of the next frame (camera update) must match the viewport rectangle of that
+        // frame, otherwise the picture is stretched while the line between the two views moves
+        if (coop_tr_player >= 0) {
+            u32 age_ = (u32)((u32)object_timer - coop_tr_start) + 1;
+            u32 dur_ = coop_tr_mode ? COOP_TR_TICKS_IN : COOP_TR_TICKS;
+            int sp_ = coop_tr_split_at(age_);
+            int h0_ = sp_, h1_ = 240 - sp_;
+            if (age_ < dur_) {
+                character_change_array[0].unk280 = (f32)(coop_vp_rect[0][2] - coop_vp_rect[0][0]) / (f32)h0_;
+                character_change_array[1].unk280 = (f32)(coop_vp_rect[1][2] - coop_vp_rect[1][0]) / (f32)h1_;
+            } else if (coop_tr_mode) {
+                character_change_array[coop_tr_player].unk280 = (320.0f / 240.0f);
+            }
         }
     }
 }
@@ -3315,7 +4392,7 @@ RECOMP_PATCH Gfx *func_global_asm_80709344(Gfx *dl) {
     }
 #endif
     for (i = 0; i < n; i++) {
-        if (coop_active_here() && coop_fullscreen_now() >= 0) continue; // full-screen scene (tag barrel, cutscene): no HUD
+        if (coop_active_here() && (coop_fullscreen_now() >= 0 || coop_tr_player >= 0)) continue; // full-screen scene / split transition: no HUD
         if (character_change_array[i].does_player_exist) {
             if (!(character_change_array[i].unk2DC.unk6 & 0x20)
             && (((character_change_array[i].unk2DC.unk8
@@ -3336,6 +4413,9 @@ RECOMP_PATCH Gfx *func_global_asm_80709344(Gfx *dl) {
                     } else {
                         guOrtho((Mtx *)&buf[0xC0 / 4], 640.0f - 640.0f / hs, 640.0f + 639.0f / hs, 479.0f / hs, -480.0f / hs, -20000.0f, 20000.0f, 1.0f);
                     }
+                    // Back to the full-screen HUD state (viewport...): the first-person (aiming) overlay leaves the viewport of the aiming Kong's half
+                    // set, which flattened the health bar of the aiming Kong and pushed the other Kong's one out of the screen.
+                    dl = func_global_asm_805FD030(dl);
                     gSPSegment(dl++, 0x02, osVirtualToPhysical(buf));
                     // clip the HUD to the player's half of the screen (its slide animation would otherwise cross into the other view)
                     gDPPipeSync(dl++);
@@ -3390,6 +4470,82 @@ RECOMP_PATCH void func_global_asm_805FF378(s32 nextMap, s32 nextExit) {
         if (nextMap != -1) {
             if (current_character_index[0] >= 6) {
                 current_character_index[0] = func_global_asm_806C8DE0(0);
+            }
+            coop_door_p2 = (coop_door_trig == 1 && coop_active_here()) ? 1 : 0;
+            // hall / cave / lobby zone: the Kong that walked in is the one running (state 13), the other one stands (12)
+            if (coop_door_trig < 0 && coop_active_here() && character_change_array != NULL && character_change_array[1].does_player_exist
+                && character_change_array[0].playerPointer != NULL && character_change_array[1].playerPointer != NULL) {
+                // zone (hall / cave / lobby): the Kong closest to the zone walked in (log: 3541 vs 327551)
+                Actor *z0 = character_change_array[0].playerPointer, *z1 = character_change_array[1].playerPointer;
+                f32 dz0 = SQ(z0->x_position - D_global_asm_807FDCB8) + SQ(z0->z_position - D_global_asm_807FDCBC);
+                f32 dz1 = SQ(z1->x_position - D_global_asm_807FDCB8) + SQ(z1->z_position - D_global_asm_807FDCBC);
+                coop_door_p2 = (dz1 < dz0) ? 1 : 0;
+            }
+            coop_arrive_pending = coop_active_here() ? 1 : 0;
+            coop_door_hs = (current_map == MAP_TROFF_N_SCOFF || nextMap == MAP_TROFF_N_SCOFF) ? 1 : 0;
+            // Troff 'n' Scoff door (Hott&Stroff), both ways: P1 runs the exit walk like in the original (P2's walk looped the door)
+            if (current_map == MAP_TROFF_N_SCOFF || nextMap == MAP_TROFF_N_SCOFF) coop_door_p2 = 0;
+            coop_door_p1 = (!coop_door_p2 && coop_active_here()) ? 1 : 0;
+            int shop_p2 = coop_door_p2; // (Kong who walked into the zone: the shops are played by him)
+            // DK Isles: the stored zone position is that of the last trigger (music zones...), not the shop door: ask the zone's own logic
+            // (state 13, else the Kong nearest to the zone actor = gPlayerPointer)
+            if (coop_active_here() && current_map == MAP_DK_ISLES_OVERWORLD && coop_is_shop(nextMap) && character_change_array != NULL
+                && character_change_array[1].does_player_exist && character_change_array[1].playerPointer != NULL)
+                shop_p2 = (coop_zone_player() == character_change_array[1].playerPointer) ? 1 : 0;
+            if (coop_isles_scene && coop_isles_trip && coop_active_here()
+                && ((current_map == MAP_KLUMSY && nextMap == MAP_DK_ISLES_OVERWORLD && is_cutscene_active != 0)
+                    || (current_map == MAP_DK_ISLES_OVERWORLD && nextMap == MAP_KLUMSY))) {
+                // Klumsy's sequence goes to DK Isles (cutscene showing the first world's hall opening) and comes back: same scene, same Kong
+                coop_isles_map = nextMap;
+                coop_isles_from = current_map;
+                if (nextMap == MAP_KLUMSY) coop_isles_ret = 1;
+            } else {
+                coop_isles_scene = (coop_active_here() && ((current_map == MAP_TRAINING_GROUNDS && nextMap == MAP_DK_ISLES_OVERWORLD)
+                    || (current_map == MAP_DK_ISLES_OVERWORLD && nextMap == MAP_KLUMSY))) ? 1 : 0;
+                coop_isles_trip = (coop_isles_scene && nextMap == MAP_KLUMSY) ? 1 : 0;
+                coop_isles_map = nextMap;
+                coop_isles_from = current_map;
+                coop_isles_who = 0; // arrival scenes (parrot of the Training Grounds, Klumsy's roll...) are always J1's: screen, camera, text. (Was: the Kong who entered.)
+                coop_isles_seen = 0; coop_isles_idle = 0; coop_isles_t = 0; coop_isles_cs = 0; coop_isles_ret = 0;
+            }
+            // Klumsy: the cutscene walk paths only work with P1 as the walker; P2 (even if he is the one who walked in) is placed beside him
+            if (nextMap == MAP_KLUMSY && coop_active_here()) { coop_door_p2 = 0; coop_door_p1 = 1; }
+            // Same for the cave of the Training Grounds (from DK Isles): with P2 as the walker he ran in circles behind the switch, the Training Grounds
+            // rules (P1's pad neutral, no placement beside the walker, no glue) only suit the lab / barrel exits
+            if (nextMap == MAP_TRAINING_GROUNDS && current_map == MAP_DK_ISLES_OVERWORLD && coop_active_here()) { coop_door_p2 = 0; coop_door_p1 = 1; coop_tg_cave = 1; coop_tg_cave_on = 0; }
+            // EXITS (arrivals) are always walked by P1, whoever entered: P2 follows beside him (25 units to his left, same heading and states), the walker
+            // being shifted by COOP_ENTRY_CENTER so that the pair is centred on the doorway. Who ENTERED (coop_door_trig, coop_isles_who) still decides the
+            // entry fades and the scenes. One single case to maintain instead of one per Kong.
+            if (coop_active_here()) { coop_door_p2 = 0; coop_door_p1 = 1; }
+            coop_door_trig = -1;
+            coop_mg_pending = 0;
+            int shop_go = coop_active_here() && coop_is_shop(nextMap) && character_change_array != NULL
+                && character_change_array[1].does_player_exist && character_change_array[0].playerPointer != NULL && character_change_array[1].playerPointer != NULL;
+            coop_sh_go = shop_go; // (the two-player test of the shop's own load would see the single-player setting of that map)
+            if (shop_go && shop_p2) {
+                coop_mg_pending = 1; // P2 goes in: his persona, colour and pad (text and choices) are the shop's
+                coop_mg_col = coop_col_idx[1];
+            }
+            if (current_map == MAP_TRAINING_GROUNDS && coop_active_here() && character_change_array != NULL && character_change_array[1].does_player_exist
+                && nextMap != MAP_TRAINING_GROUNDS && (coop_barrel_user() == 1 || (coop_barrel_user() < 0 && coop_pad_owner == 1))) {
+                // the player who enters (barrel: the one in the barrel state; lab / door: the one the zone's trigger was computed for)
+                coop_mg_pending = 1;
+                coop_mg_col = coop_col_idx[1];
+            }
+            // exit towards DK Isles (a co-op map, nothing to play): the one who walks out is the Kong closest to the zone, like halls / doors
+            if (current_map == MAP_TRAINING_GROUNDS && nextMap == MAP_DK_ISLES_OVERWORLD && coop_active_here()) coop_mg_pending = coop_door_p2;
+            if (((current_map == MAP_TRAINING_GROUNDS && nextMap != MAP_TRAINING_GROUNDS) || shop_go) && coop_active_here() && character_change_array != NULL
+                && character_change_array[1].does_player_exist && character_change_array[1].playerPointer != NULL) {
+                int stay = coop_mg_pending ? 0 : 1; // the barrel player leaves, the other one stays
+                Actor *sp2 = character_change_array[stay].playerPointer;
+                coop_tg_stayer = stay;
+                coop_tg_map = current_map;
+                coop_tg_x = sp2->x_position; coop_tg_y = sp2->y_position; coop_tg_z = sp2->z_position;
+                coop_tg_rot = (s16)sp2->y_rotation;
+                coop_tg_saved = 1;
+                coop_tg_hold = 1;
+                coop_tg_hold_t = 0;
+                coop_tg_fade = stay ? 0 : 1; // the other Kong is the one who goes in
             }
             D_global_asm_8076A0B1 |= 1;
             D_global_asm_8076AEF2 = current_map;
@@ -3475,6 +4631,8 @@ extern u8 D_global_asm_80770DC9;
 extern s16 D_global_asm_8076AEE2;
 extern f32 func_global_asm_80612794(s16);
 extern f32 func_global_asm_80612790(s16);
+#define COOP_ENTRY_FWD 0.0f   // P2 start offset ahead of P1 on walk-in entries (door / lobby)
+#define COOP_ENTRY_SIDE 25.0f // P2 start offset to the side of P1 on walk-in entries
 #define COOP_P2_ENTRY 1 // 1 = P2 gets an entry placement/animation beside P1, 0 = P2 just placed at the exit
 
 RECOMP_PATCH void func_global_asm_806C90C4(s32 exitIndex) {
@@ -3487,6 +4645,54 @@ RECOMP_PATCH void func_global_asm_806C90C4(s32 exitIndex) {
     if (!is_p2) {
         D_global_asm_8076AEE2 = 0;
         global_properties_bitfield &= -0x401;
+    }
+    // Training Grounds, back from a barrel / the lab. The exit data given to the 1st player (slot 0) is the barrel position; the
+    // 2nd call gets the normal zone exit. Kept for P2 when he is the one who came out of the barrel.
+    static CoopExitData tg_exit_stash;
+    if (coop_active_here()) { coop_door_ex = exit->x; coop_door_ez = exit->z; coop_door_ang = (s16)((exit->angle / 255.0) * 4095.0); }
+    int tg_ret = coop_active_here() && current_map == coop_tg_map && coop_tg_saved;
+    if (tg_ret && !is_p2) tg_exit_stash = *exit;
+    // Cave / hall / world door exits (forced walk): the Kong who walked in starts a little to the right so that the pair (the other Kong stands
+    // at his left) is centred on the doorway. Not for Hott&Stroff, Klumsy and the scenes of coop_isles_*.
+    static CoopExitData ent_ex;
+    // Every type of exit is handled (walk, appear, landing): offsets along the "left" axis of the exit for P1 / P2 (ent_p1 / ent_p2) and a shifted
+    // copy of the exit for the walk (ent_ex). P1 walks (shifted right of the exit), P2 stands at his left.
+    int ent_shift = coop_active_here() && !tg_ret && coop_door_ret1 > 0 && (!coop_door_hs || current_map != MAP_TROFF_N_SCOFF) && current_map != MAP_KLUMSY; // (Hott&Stroff: only the exit into a world is centred, not the arrival inside the house)
+    f32 ent_p1 = 0.0f, ent_p2 = 0.0f;
+    if (ent_shift) {
+        ent_p1 = -COOP_ENTRY_CENTER; ent_p2 = COOP_ENTRY_CENTER; // P1 walks (shifted to the right of the exit), P2 stands at his left
+    }
+    if (ent_shift && exit->has_autowalk == 1) {
+        s16 ent_ang = (exit->angle / 255.0) * 4095.0;
+        ent_ex = *exit;
+        ent_ex.x = exit->x - func_global_asm_80612794(ent_ang + 0x400) * COOP_ENTRY_CENTER;
+        ent_ex.z = exit->z - func_global_asm_80612790(ent_ang + 0x400) * COOP_ENTRY_CENTER;
+    }
+    if (tg_ret && is_p2) {
+        coop_tg_saved = 0; // slot 1 is the last one placed
+        if (coop_tg_stayer == 0) exit = &tg_exit_stash; // P2 came out of the barrel: he takes the barrel position
+        if (coop_tg_stayer == 0 && exit->has_autowalk == 1) {
+            // P2 came out of the lab: he runs the exit walk (the autowalk is bound to him, see func_global_asm_8067889C)
+            coop_tg_free = 1;
+            gCurrentPlayer->unkAC = -10000.0f;
+            func_global_asm_806F39E8(gCurrentPlayer, exit, 0x32);
+            gCurrentPlayer->unk6A &= ~0x200;
+            PaaD->unk104->unk15F = exit->unk7 <= 0 ? 1 : exit->unk7;
+            return;
+        }
+    }
+    if (coop_active_here() && current_map == coop_tg_map && tg_ret && (is_p2 ? 1 : 0) == coop_tg_stayer) {
+        // back from Cranky's lab / a barrel: the player who stayed is where he was, standing
+        coop_tg_free = 1;
+        gCurrentPlayer->unkAC = -10000.0f;
+        gCurrentPlayer->x_position = coop_tg_x;
+        gCurrentPlayer->y_position = gCurrentPlayer->unkA0 = coop_tg_y;
+        gCurrentPlayer->z_position = coop_tg_z;
+        gCurrentPlayer->y_rotation = coop_tg_rot;
+        gCurrentPlayer->unkEE = coop_tg_rot;
+        gCurrentPlayer->unk6A &= ~0x200;
+        PaaD->unk104->unk15F = exit->unk7 <= 0 ? 1 : exit->unk7;
+        return;
     }
 #if COOP_P2_ENTRY
     // P2: the walk-in autowalk is a single global driver (one actor), so P2 cannot run it at the same time.
@@ -3503,8 +4709,10 @@ RECOMP_PATCH void func_global_asm_806C90C4(s32 exitIndex) {
     }
     if (is_p2) {
         s16 ang = (exit->angle / 255.0) * 4095.0;
-        f32 fwd = exit->has_autowalk == 1 ? 50.0f : 0.0f;
-        f32 side = 35.0f;
+        f32 fwd = exit->has_autowalk == 1 ? COOP_ENTRY_FWD : 0.0f;
+        f32 side = exit->has_autowalk == 1 ? COOP_ENTRY_SIDE : 35.0f;
+        if (ent_shift) side = ent_p2; // (the walker is moved to the right, P2 stands where the shift puts him)
+        if (tg_ret && coop_tg_stayer == 0) { side = 0.0f; fwd = 0.0f; } // P2 came out of the barrel: on the exit
         gCurrentPlayer->unkAC = -10000.0f;
         gCurrentPlayer->x_position = exit->x + func_global_asm_80612794(ang) * fwd + func_global_asm_80612794(ang + 0x400) * side;
         gCurrentPlayer->y_position = gCurrentPlayer->unkA0 = exit->y;
@@ -3528,14 +4736,14 @@ RECOMP_PATCH void func_global_asm_806C90C4(s32 exitIndex) {
             // Fallthrough
         case 0:
             gCurrentPlayer->unkAC = -10000.0f;
-            gCurrentPlayer->x_position = exit->x;
-            gCurrentPlayer->y_position = gCurrentPlayer->unkA0 = exit->y;
-            gCurrentPlayer->z_position = exit->z;
             gCurrentPlayer->y_rotation = (exit->angle / 255.0) * 4095.0;
+            gCurrentPlayer->x_position = exit->x + func_global_asm_80612794((s16)gCurrentPlayer->y_rotation + 0x400) * ent_p1; // (ent_p1 = 0 outside the shifted entries)
+            gCurrentPlayer->y_position = gCurrentPlayer->unkA0 = exit->y;
+            gCurrentPlayer->z_position = exit->z + func_global_asm_80612790((s16)gCurrentPlayer->y_rotation + 0x400) * ent_p1;
             gCurrentPlayer->unkEE = gCurrentPlayer->y_rotation;
             break;
         case 1:
-            func_global_asm_806F39E8(gCurrentPlayer, exit, 0x32);
+            func_global_asm_806F39E8(gCurrentPlayer, ent_shift ? &ent_ex : exit, 0x32);
     }
     gCurrentPlayer->unk6A &= ~0x200;
     PaaD->unk104->unk15F = exit->unk7 <= 0 ? 1 : exit->unk7;
@@ -3550,6 +4758,10 @@ RECOMP_PATCH void func_global_asm_806C90C4(s32 exitIndex) {
 extern s32 D_global_asm_807FD6F0[];
 #define COOP_P_SWIRL 1
 RECOMP_PATCH u8 setAction(s16 actionIndex, Actor *actor, u8 playerIndex) {
+    // Troff 'n' Scoff circle: the script reacts to P2 (roles swapped) but queues its action for player 0 -> give it to P2.
+    if (coop_pad_swap && playerIndex == 0 && current_map == MAP_TROFF_N_SCOFF) {
+        playerIndex = 1;
+    }
     if (character_change_array[playerIndex].action_initiated < actionIndex) {
         character_change_array[playerIndex].action_initiated = actionIndex;
         character_change_array[playerIndex].unk2A0 = actor;
@@ -3569,6 +4781,16 @@ RECOMP_PATCH u8 setAction(s16 actionIndex, Actor *actor, u8 playerIndex) {
             p2->unk22C = p1->unk22C;
             p2->unk230 = p1->unk230;
             p2->unk234 = p1->unk234;
+            // World door entry (the swirl target is the door's centre): the Kong who walks in goes a little to the right of it, so that the pair
+            // (the other Kong beside him, at his left) is centred on the door. Not for Hott&Stroff.
+            // (entering: the Kong who walks in; arriving (action 90): always P1)
+            int swirl_who = (actionIndex == 90) ? 0 : coop_door_trig;
+            if (swirl_who >= 0 && D_global_asm_807476F4 != 28 && character_change_array[swirl_who].playerPointer != NULL) { // (28: Hott&Stroff door)
+                PlayerAdditionalActorData *ep = (swirl_who == 1) ? p2 : p1;
+                s16 era = (s16)character_change_array[swirl_who].playerPointer->y_rotation;
+                ep->unk22C -= func_global_asm_80612794(era + 0x400) * COOP_ENTRY_CENTER;
+                ep->unk234 -= func_global_asm_80612790(era + 0x400) * COOP_ENTRY_CENTER;
+            }
             if (character_change_array[1].action_initiated < actionIndex) {
                 character_change_array[1].action_initiated = actionIndex;
                 character_change_array[1].unk2A0 = actor;
@@ -3634,6 +4856,8 @@ extern u8 D_global_asm_807FD738;
 extern void func_global_asm_806F603C(void);
 extern u8 func_global_asm_806F6E58(s16);
 extern void func_global_asm_806F69A8(u8);
+extern s16 D_global_asm_807FD790[];
+extern u8 D_global_asm_807FD798;
 extern CoopQ36 *D_global_asm_807FD734;
 
 RECOMP_PATCH void func_global_asm_806F6F28(void) {
@@ -3643,6 +4867,8 @@ RECOMP_PATCH void func_global_asm_806F6F28(void) {
     u8 n;
     u8 saved_cc = cc_player_index;
     PlayerAdditionalActorData *PaaD;
+    s16 acc_[4];
+    u8 acc_n_ = 0, k_, called_ = 0;
 
     cameraShockaveUnlocked = FALSE;
     sp45 = FALSE;
@@ -3693,6 +4919,11 @@ RECOMP_PATCH void func_global_asm_806F6F28(void) {
             D_global_asm_807FD730 = keep_head;
             D_global_asm_807FD734 = NULL; // force the original code to recompute the tail of the (filtered) list
             func_global_asm_806F69A8(playerIndex);
+            // func_global_asm_806F69A8 clears the list of "objects picked up this frame" (D_global_asm_807FD790, read by the script condition 0x22:
+            // the Japes golden banana in front of Diddy's cage starts its scene with it) at the start of every call, so P2's call wiped what P1's call
+            // had just collected. The ids are accumulated over the calls and put back after the loop.
+            called_ = 1;
+            for (k_ = 0; k_ < D_global_asm_807FD798 && acc_n_ < 4; k_++) acc_[acc_n_++] = D_global_asm_807FD790[k_];
             if (held_head != NULL) {
                 if (D_global_asm_807FD730 == NULL) {
                     D_global_asm_807FD730 = held_head;
@@ -3705,6 +4936,10 @@ RECOMP_PATCH void func_global_asm_806F6F28(void) {
             D_global_asm_807FD734 = NULL;
             coop_pickup_player = 0;
         }
+    }
+    if (called_) {
+        for (k_ = 0; k_ < acc_n_; k_++) D_global_asm_807FD790[k_] = acc_[k_];
+        D_global_asm_807FD798 = acc_n_;
     }
     cc_player_index = saved_cc;
 }
@@ -3808,6 +5043,167 @@ RECOMP_PATCH void changeCollectableCount(s32 HUDItemIndex, u8 playerIndex, s16 a
 }
 #endif // COOP_P_COUNT
 
+// ---- Story co-op: reaction to a pickup (golden banana / key dance, jingles) ----
+// The original reads P1 (gPlayerPointer) and the player index of the "current" extra player info, so when P2 picked up a golden
+// banana the DANCE was made by P1. Here the Kong that picked the item up reacts.
+extern void func_global_asm_80687CC8(void);
+extern u8 D_global_asm_80745838;
+
+// Golden banana dance: both Kongs dance (each with the dance of its own Kong); the scene (camera) is the one of the Kong that
+// picked the banana up, the other Kong's own cutscene request is ignored.
+// TEST (the 3 coconut switches of Japes did not appear after the 1st golden banana): 0 = only the Kong who picked the banana dances (original flow),
+// 1 = both dance (co-op feature)
+#define COOP_GB_DANCE_BOTH 1
+static int coop_dance_owner = -1;
+static u32 coop_dance_stamp = 0;
+static int coop_dance_started = 0;
+static int coop_gb_dance_ok(Actor *pl) {
+    if (pl == NULL) return 0;
+    if ((pl->y_position - pl->floor) < 100.0f && pl->control_state != 0x63) {
+        if (!(pl->unk6A & 4) || !((pl->unkAC - pl->y_position) > 20.0f)) return 1;
+    }
+    return 0;
+}
+int coop_cs_skip(Actor *a) {
+    int pi = -1, k;
+    if (coop_dance_owner < 0 || !coop_active_here()) return 0;
+    if ((u32)((u32)object_timer - coop_dance_stamp) > 30) { coop_dance_owner = -1; return 0; }
+    for (k = 0; k < 2; k++) {
+        if (a != NULL && character_change_array[k].playerPointer == a) pi = k;
+    }
+    if (pi < 0) return 0;
+    if (pi == coop_dance_owner) { coop_dance_started = 1; return 0; }
+    return coop_dance_started ? 1 : 0; // the picker's scene is already running: keep it
+}
+RECOMP_PATCH void func_global_asm_806F79E0(s16 arg0, u8 arg1) {
+    s32 var_v0;
+    Actor *pl = gPlayerPointer;
+    u8 pidx = extra_player_info_pointer->unk1A4;
+    if (coop_active_here() && coop_pickup_player < 2 && character_change_array[coop_pickup_player].playerPointer != NULL) {
+        pidx = coop_pickup_player;
+        pl = character_change_array[pidx].playerPointer;
+    }
+    switch (arg0) {
+        case 0x8E:
+            playSong(MUSIC_35_CRYSTAL_COCONUT_GET, 1.0 - (D_global_asm_80745838 * 0.3));
+            break;
+        case 0x57:
+            playSong(MUSIC_33_MELON_SLICE_GET, 1.0 - (D_global_asm_80745838 * 0.3));
+            break;
+        case 0x56:
+            playSound(0x147, 0x7FFF, 63.0f, 1.0f, 5, 0);
+            break;
+        case 0x11:
+        case 0x8F:
+            playSound(0x157, 0x7FFF, 63.0f, 1.0f, 5, 0);
+            break;
+        case 0x98:
+            playSound(0x263, 0x7FFF, 63.0f, 1.0f, 5, 0);
+            break;
+        case 0xDD:
+        case 0xDE:
+        case 0xDF:
+        case 0xE0:
+        case 0xE1:
+            playSong(MUSIC_69_BLUEPRINT_GET, 1.0f);
+            break;
+        case 0x90:
+            playSong(MUSIC_18_GB_KEY_GET, 1.0f);
+            func_global_asm_80687C48();
+            if ((pl->y_position - pl->floor) < 100.0f) {
+                if (pl->control_state != 0x63) {
+                    if (!(pl->unk6A & 4) || !((pl->unkAC - pl->y_position) > 20.0f)) {
+                        setAction(0x29, 0, pidx);
+                    }
+                }
+            }
+            break;
+        case 0x74:
+        case 0x288:
+            if (coop_active_here() && pidx < 2) { coop_gb_picker = pidx; coop_gb_stamp = (u32)object_timer; }
+            playSong(MUSIC_18_GB_KEY_GET, 1.0f);
+            if (COOP_GB_DANCE_BOTH && coop_active_here() && pidx < 2 && character_change_array[1 - pidx].does_player_exist
+                && character_change_array[0].playerPointer != NULL && character_change_array[1].playerPointer != NULL) {
+                // co-op: whoever picks the banana up, P1 is the owner of the scene (its dance runs the cutscene, with P1's camera and heading) and BOTH
+                // Kongs are forced into the dance, whatever their state (the banana still counts for the picker). The scene is played at the place of
+                // the pickup: the other Kong is brought there (and sent back afterwards if he was far away).
+                int oi = 1 - pidx;
+                Actor *po = character_change_array[oi].playerPointer;
+                f32 gdx = po->x_position - pl->x_position, gdz = po->z_position - pl->z_position;
+                coop_gbd_on = 1; coop_gbd_who = 0; coop_gbtp_t = (u32)object_timer; coop_gbtp_quiet = 0; coop_gbd_have = 0;
+                coop_gbd_x = pl->x_position; coop_gbd_z = pl->z_position;
+                coop_gbd_y = ((pl->y_position - pl->floor) < 100.0f) ? pl->y_position : pl->floor; // picked in mid-air: the scene is on the ground below
+                if (gdx * gdx + gdz * gdz > 150.0f * 150.0f) { // far away: he is brought to the picker for the scene, then sent back
+                    coop_gbtp_on = 1; coop_gbtp_who = oi; coop_gbtp_t = (u32)object_timer;
+                    coop_gbtp_x = po->x_position; coop_gbtp_y = po->y_position; coop_gbtp_z = po->z_position; coop_gbtp_ang = (s16)po->y_rotation;
+                }
+                coop_dance_owner = 0;
+                coop_dance_stamp = (u32)object_timer;
+                coop_dance_started = 0;
+                setAction(0x29, 0, 0);
+                setAction(0x29, 0, 1);
+            } else if ((pl->y_position - pl->floor) < 100.0f) {
+                if (pl->control_state != 0x63) {
+                    if (!(pl->unk6A & 4) || !((pl->unkAC - pl->y_position) > 20.0f)) {
+                        setAction(0x29, 0, pidx);
+                    }
+                }
+            }
+            break;
+        case 0xA:
+        case 0xD:
+        case 0x16:
+        case 0x1E:
+        case 0x1F:
+        case 0x1CF:
+        case 0x1D0:
+            playSound(0x2A0, 0x7FFF, 63.0f, 1.0f, 5, 0);
+            break;
+        case 0x1C:
+        case 0x1D:
+        case 0x23:
+        case 0x24:
+        case 0x27:
+            playSong(MUSIC_23_BANANA_COIN_GET, 1.0 - (D_global_asm_80745838 * 0.3));
+        case 0x2B:
+            break;
+        case 0xB7:
+            playSong(MUSIC_145_RAINBOW_COIN_GET, 1.0 - (D_global_asm_80745838 * 0.3));
+            break;
+        case 0xEC:
+        case 0x1D2:
+            playSong(MUSIC_32_MINECART_COIN_GET, 1.0 - (D_global_asm_80745838 * 0.3));
+            break;
+        case 0x13C:
+            playSong(MUSIC_18_GB_KEY_GET, 1.0f);
+            var_v0 = 0x41;
+            if (current_map == MAP_HELM) {
+                var_v0 = 0x29;
+            }
+            setAction(var_v0, 0, pidx);
+            break;
+        case 0x18D:
+            playSong(MUSIC_18_GB_KEY_GET, 1.0f);
+            setAction(0x42, 0, pidx);
+            if (COOP_GB_DANCE_BOTH && coop_active_here() && pidx < 2) {
+                // crown (battle arena, item 0x18D): the other Kong dances too, with the dance of his own Kong
+                int oi = 1 - pidx;
+                Actor *po = character_change_array[oi].playerPointer;
+                if (character_change_array[oi].does_player_exist && po != NULL) { // (no ground / state guard here: crown dance forced)
+                    coop_dance_owner = pidx;
+                    coop_dance_stamp = (u32)object_timer;
+                    coop_dance_started = 0;
+                    setAction(0x42, 0, oi);
+                }
+            }
+            func_global_asm_80687CC8();
+            break;
+        case 0x1D1:
+            playSound(0xAE, 0x7FFF, 63.0f, 1.0f, 5, 0);
+            break;
+    }
+}
+
 // ---- Story co-op: warp pads for P2 (func_global_asm_806E2F3C, "Z" handler) ----
 // The original only checks the pad under the player (func_global_asm_806E56EC) when cc_number_of_players >= 2.
 // In co-op we stay at 1, so P2 never got the pad action; P1 is left on its normal single-player path.
@@ -3859,32 +5255,118 @@ extern void func_global_asm_80641A78(void);
 extern s32 D_global_asm_807F5DE4;
 extern s32 D_global_asm_807F5E60;
 
+// Japes, first cave: the door (script object 43) closes again (state 7 -> 8) when the main player is not Diddy and the
+// permanent flag 0x1F is not set. In co-op the door must stay open while ONE of the two Kongs is Diddy: the condition
+// "not Diddy" (0x8019, arg 3) of that object is switched off (0x8000 = always false) while a Diddy is present.
+// TEST (the Diddy / coconut switches scene of Japes is not triggered in co-op): 0 = this rewrite of the script object 43 is switched off
+#define COOP_DIDDY_DOOR_RULE 1
+static void coop_door_diddy_rule(void) {
+    s16 mi;
+    s16 oi;
+    PropScriptBlock *blk;
+    int diddy;
+    int i;
+    if (!COOP_DIDDY_DOOR_RULE) return;
+    if (current_map != MAP_JAPES || !coop_active_here() || !character_change_array[1].does_player_exist) return;
+    mi = D_global_asm_807F6240[43];
+    if (mi == -1) return;
+    oi = func_global_asm_80659470(mi);
+    if (oi == -1 || D_global_asm_807F6000[oi].unk7C == NULL) return;
+    diddy = (current_character_index[0] == 1 || current_character_index[1] == 1);
+    for (blk = D_global_asm_807F6000[oi].unk7C->unkA0; blk != NULL; blk = blk->next) {
+        for (i = 0; i < blk->condition_count && i < 5; i++) {
+            PropScriptInstruction *c = &blk->conditions[i];
+            if ((c->instruction == (s16)0x8019 || c->instruction == (s16)0x8000) && c->args[0] == 3) {
+                c->instruction = diddy ? (s16)0x8000 : (s16)0x8019;
+            }
+        }
+    }
+}
+
+extern s16 func_global_asm_8063C328(s16 arg0);
+// 1 when the Kong stands on a warp pad. Measured object types: pads 0x210 (yellow), 0x211 (purple), 0x212 (red), 0x213 (green), 0x214 (blue);
+// palm leaves 0x6C, ship elevator 0x26C, weapon switch 0x128.
+static int coop_on_warp_pad(Actor *a) {
+    s16 t;
+    if (a == NULL || a->locked_to_pad != 1) return 0;
+    t = func_global_asm_8063C328((s16)a->unk10C);
+    return t >= 0x210 && t <= 0x214;
+}
+
 RECOMP_PATCH void func_global_asm_8062BAE4(void) {
     Actor *saved_g = gPlayerPointer;
     Actor *saved_c0 = character_change_array[0].playerPointer;
     u8 saved_k0 = current_character_index[0];
     int swapped = 0;
 
-    if (coop_active_here() && current_map != MAP_TROFF_N_SCOFF && // Troff 'n' Scoff circle: P1 only (the swap made P2's step feed P1's bananas and warp both Kongs)
+    coop_door_diddy_rule();
+    if (coop_active_here() &&
         character_change_array[1].does_player_exist
         && character_change_array[1].playerPointer != NULL && saved_c0 != NULL) {
         Actor *p2 = character_change_array[1].playerPointer;
-        if (p2->locked_to_pad == 1 && saved_c0->locked_to_pad != 1) {
+        if (coop_mg_ret > 0) coop_mg_ret--;
+        if (coop_door_ret1 > 0) coop_door_ret1--;
+        // P2 on an object and P1 on none (switches, platforms...), or P2 on a WARP PAD and P1 not on one: locked_to_pad == 1 is also true on palm
+        // tree leaves, elevators... (the prop id is in unk10C), so only the type of the object tells a warp pad (0x210..0x214) from the rest.
+        int p2_warp = coop_on_warp_pad(p2);
+        int p1_warp = coop_on_warp_pad(saved_c0);
+        if ((p2->locked_to_pad == 1 && (saved_c0->locked_to_pad != 1 || (p2_warp && !p1_warp))) || coop_mg_ret > 0) {
             gPlayerPointer = p2;
             character_change_array[0].playerPointer = p2;
             current_character_index[0] = current_character_index[1];
             swapped = 1;
         }
     }
+    coop_pad_owner = swapped ? 1 : 0;
+    coop_pad_swap = swapped;
     func_global_asm_8063B4A4();
     func_global_asm_8062BB2C(D_global_asm_807F5DE4, D_global_asm_807F5E60, 1);
     func_global_asm_8063B758();
     func_global_asm_80641A78();
+    coop_pad_swap = 0;
     if (swapped) {
         gPlayerPointer = saved_g;
         character_change_array[0].playerPointer = saved_c0;
         current_character_index[0] = saved_k0;
     }
+}
+
+// Script condition 0x13 "a player is within R units of this object". The door objects (world doors 0x2AD, Hott&Stroff doors 0x2AC) use it, in state 1, to
+// play their ARRIVAL scene (cutscene 29, swirl-out of the Kong who comes out of the door). In co-op the loop covers both Kongs, so a Kong left standing near
+// a door (P2 near the Hott&Stroff door) made that door play its exit scene (camera on the door, swirl sound) when P1 came out of the shop instead.
+// During the arrival (first ticks of a map) only P1, who is the one who walks out of every door, is considered.
+extern u8 func_global_asm_8064216C(s16 cap, f32 x, f32 y, f32 z);
+RECOMP_PATCH s32 func_global_asm_80642204(s16 arg0) {
+    u8 playerIndex;
+    u8 n = D_global_asm_80750AB4;
+    if (coop_active_here() && n > 1 && (u32)object_timer < 300) n = 1;
+    for (playerIndex = 0; playerIndex < n; playerIndex++) {
+        if ((character_change_array[playerIndex].does_player_exist)
+            && (func_global_asm_8064216C(arg0,
+                              character_change_array[playerIndex].playerPointer->x_position,
+                              character_change_array[playerIndex].playerPointer->y_position,
+                              character_change_array[playerIndex].playerPointer->z_position))) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+// Warp pad: the original drops the global geometry budget (D_global_asm_807F9064) to 40000 while a Kong teleports and restores it
+// afterwards. The budget is shared by both views, so the other player's screen flickered (reduced scene). Skipped in co-op.
+extern u32 D_global_asm_807F9064;
+extern u32 D_global_asm_807F9068;
+RECOMP_PATCH void func_global_asm_8065EACC(void) {
+    if (coop_active_here() && character_change_array[1].does_player_exist) return;
+    if (D_global_asm_807F9064 != 40000) {
+        D_global_asm_807F9068 = D_global_asm_807F9064;
+    }
+    D_global_asm_807F9064 = 40000;
+}
+
+RECOMP_PATCH void func_global_asm_8065EAF4(void) {
+    if (coop_active_here() && character_change_array[1].does_player_exist) return;
+    D_global_asm_807F9064 = D_global_asm_807F9068;
 }
 
 // ---- Story co-op: warp pad action (func_global_asm_806E4D84) ----
@@ -3906,6 +5388,305 @@ RECOMP_PATCH void func_global_asm_806E4D84(void) {
     }
 }
 
+// ---- Story co-op: camera angle used to turn the stick into a direction (func_global_asm_8061C0FC) ----
+// The stick is turned into a world direction with the angle of the player's own camera (unk2C8, see func_global_asm_806E...: unk28 = unk2C8 + stick angle).
+// The door / lobby "autowalk" computes its simulated stick for player 0's camera. When P2 is the walker (he walked into the door), his own camera
+// has another yaw and he walked sideways (log: P2 left by ~300 units in the swirl-out of the world door, P1 did not). _orig is the original body;
+// _coop gives P2 the angle of P1's camera while he is the autowalker. COOP_CAMYAW_USE_ORIG 1 forces the original.
+#define COOP_CAMYAW_USE_ORIG 0
+#define COOP_TWO_PI 6.28318548202514648
+typedef struct {
+    u8 unk0[0xC - 0x0];
+    f32 unkC;
+    u8 unk10[0xA8 - 0x10];
+    f32 unkA8;
+    s32 unkAC;
+    u8 unkB0[0xFB - 0xB0];
+    u8 unkFB;
+} CoopAAD_8061C0FC;
+extern f32 func_global_asm_80665E48(f32 x1, f32 z1, f32 x2, f32 z2);
+extern void func_global_asm_8060B55C(s16 *arg0);
+
+static void coop_camyaw_orig(CoopAAD_8061C0FC *arg0) {
+    character_change_array[arg0->unkFB].unk2C4 = func_global_asm_80665E48(
+        character_change_array[arg0->unkFB].look_at_eye_x,
+        character_change_array[arg0->unkFB].look_at_eye_z,
+        character_change_array[arg0->unkFB].look_at_at_x,
+        character_change_array[arg0->unkFB].look_at_at_z
+    );
+    arg0->unkA8 = character_change_array[arg0->unkFB].unk2C4;
+    switch (is_autowalking) {
+        case 0:
+            character_change_array[arg0->unkFB].unk2C8 = (arg0->unkA8 * 4096.0) / COOP_TWO_PI;
+            break;
+        case 2:
+            func_global_asm_8060B55C(&character_change_array[arg0->unkFB].unk2C8);
+            break;
+        case 3:
+            character_change_array[arg0->unkFB].unk2C8 = (arg0->unkA8 * 4096.0) / COOP_TWO_PI;
+            break;
+    }
+    if (character_change_array[arg0->unkFB].unk2E9) {
+        character_change_array[arg0->unkFB].unk2E9--;
+    }
+}
+
+static void coop_camyaw_coop(CoopAAD_8061C0FC *arg0) {
+    coop_camyaw_orig(arg0);
+    // P2 autowalker: the autowalk's stick is for player 0's camera
+    if (arg0->unkFB == 1 && is_autowalking == 3 && character_change_array[1].playerPointer != NULL && D_global_asm_807FD710 == character_change_array[1].playerPointer) {
+        character_change_array[1].unk2C8 = (character_change_array[0].unk2C4 * 4096.0) / COOP_TWO_PI;
+    }
+}
+
+RECOMP_PATCH void func_global_asm_8061C0FC(CoopAAD_8061C0FC *arg0) {
+#if COOP_CAMYAW_USE_ORIG
+    coop_camyaw_orig(arg0);
+#else
+    if (coop_active_here() && character_change_array[1].does_player_exist) {
+        coop_camyaw_coop(arg0);
+    } else {
+        coop_camyaw_orig(arg0);
+    }
+#endif
+}
+// ---- Story co-op: warp pad "teleporting" state (func_global_asm_806DB670, control state 0x52) ----
+// The original clears the bits 0x30020 of global_properties_bitfield when the Kong is moved to the destination pad and sets them again 20 frames later.
+// They are global (shared by both views): the props (switches, warp pads, palm trees...) of the OTHER Kong's view flickered at that moment.
+// _orig is the original body (verbatim); _coop is the same without the two bitfield changes. COOP_WARP_USE_ORIG 1 forces the original, to compare.
+#define COOP_WARP_USE_ORIG 0
+extern Actor *gLastSpawnedActor;
+extern void moveAndScaleActorToAnother(Actor *destination, Actor *source, f32 scale);
+extern void func_global_asm_80672C30(Actor *arg0);
+extern void coop_warp_806C8220(s32, void *, s32, Actor *) __asm__("func_global_asm_806C8220");
+extern void func_global_asm_806291B4(u8 arg0);
+extern void func_global_asm_80602498(void);
+extern s32 handleInputsForControlState(s32 arg0);
+extern void playAnimation(Actor *arg0, s32 arg2);
+extern void setYAccelerationFrom80753578(void);
+extern void applyActorYAcceleration(void);
+extern void func_global_asm_80617770(Actor *arg0, u32 arg1, u8 arg2);
+extern void func_global_asm_806C8D20(Actor *arg0);
+extern void func_global_asm_806CC970(void);
+extern void renderActor(Actor *arg0, u8 arg1);
+extern void func_global_asm_8065EACC(void);
+extern void func_global_asm_8065EAF4(void);
+
+static void coop_warp_orig(void) {
+    gCurrentActorPointer->unkB8 = 0;
+    switch (gCurrentActorPointer->control_state_progress) {
+        case 0:
+            gCurrentActorPointer->noclip_byte = 1;
+            if (spawnActor(ACTOR_BANAPORTER, 0x98)) {
+                moveAndScaleActorToAnother(gLastSpawnedActor, gCurrentActorPointer, 0.15f);
+            }
+            gCurrentActorPointer->control_state_progress++;
+            break;
+        case 1:
+            gCurrentActorPointer->control_state_progress++;
+            extra_player_info_pointer->unk23C = 4;
+            break;
+        case 2:
+            gCurrentActorPointer->x_position = ((extra_player_info_pointer->unk210 - gCurrentActorPointer->x_position) * 0.5) + gCurrentActorPointer->x_position;
+            gCurrentActorPointer->y_position = ((extra_player_info_pointer->unk214 - gCurrentActorPointer->y_position) * 0.5) + gCurrentActorPointer->y_position;
+            gCurrentActorPointer->z_position = ((extra_player_info_pointer->unk218 - gCurrentActorPointer->z_position) * 0.5) + gCurrentActorPointer->z_position;
+            if (extra_player_info_pointer->unk23C != 0) {
+                extra_player_info_pointer->unk23C--;
+                if (extra_player_info_pointer->unk23C == 0) {
+                    gCurrentActorPointer->object_properties_bitfield &= 0xFFFF7FFF;
+                    gCurrentActorPointer->shadow_opacity = 0;
+                }
+            }
+            break;
+        case 3:
+            gCurrentActorPointer->object_properties_bitfield &= 0xFFFF7FFF;
+            gCurrentActorPointer->shadow_opacity = 0;
+            gCurrentActorPointer->control_state_progress++;
+            break;
+        case 5:
+            extra_player_info_pointer->unk23C = 0x14;
+            break;
+        case 6:
+            extra_player_info_pointer->unk23C -= 1;
+            if (extra_player_info_pointer->unk23C == 0) {
+                func_global_asm_8065EACC();
+                gCurrentActorPointer->control_state_progress++;
+            }
+            break;
+        case 7:
+            global_properties_bitfield &= 0xFFFCFFDF;
+            func_global_asm_80672C30(gCurrentActorPointer);
+            gCurrentActorPointer->x_position = extra_player_info_pointer->unk204;
+            gCurrentActorPointer->y_position = extra_player_info_pointer->unk208;
+            gCurrentActorPointer->unk8C = gCurrentActorPointer->y_position;
+            gCurrentActorPointer->z_position = extra_player_info_pointer->unk20C;
+            coop_warp_806C8220(0, gCurrentActorPointer->unk178, gCurrentActorPointer->unk58, gCurrentActorPointer);
+            func_global_asm_8061EB04(gCurrentActorPointer, extra_player_info_pointer->unk1A4);
+            extra_player_info_pointer->unk23C = 0x14;
+            func_global_asm_806291B4(2);
+            gCurrentActorPointer->control_state_progress++;
+            break;
+        case 8:
+            global_properties_bitfield |= 0x30020;
+            extra_player_info_pointer->unk23C -= 1;
+            if (extra_player_info_pointer->unk23C == 0) {
+                func_global_asm_80602498();
+                if (spawnActor(ACTOR_BANAPORTER, 0x98)) {
+                    moveAndScaleActorToAnother(gLastSpawnedActor, gCurrentActorPointer, 0.15f);
+                }
+                gCurrentActorPointer->control_state_progress++;
+                extra_player_info_pointer->unk23C = 0xC;
+            }
+            break;
+        case 10:
+            if (extra_player_info_pointer->unk23C != 0) {
+                extra_player_info_pointer->unk23C--;
+                if (extra_player_info_pointer->unk23C == 0) {
+                    gCurrentActorPointer->x_position = extra_player_info_pointer->unk210;
+                    gCurrentActorPointer->y_position = extra_player_info_pointer->unk214;
+                    gCurrentActorPointer->z_position = extra_player_info_pointer->unk218;
+                    gCurrentActorPointer->object_properties_bitfield |= 0x8000;
+                }
+            }
+            break;
+        case 11:
+            handleInputsForControlState(0x20);
+            playAnimation(gCurrentActorPointer, 0x1B);
+            setYAccelerationFrom80753578();
+            gCurrentActorPointer->control_state_progress++;
+            break;
+        case 12:
+        case 13:
+            handleInputsForControlState(0x20);
+            applyActorYAcceleration();
+            break;
+        case 14:
+            func_global_asm_80617770(gCurrentActorPointer, 0x2F, 0);
+            gCurrentActorPointer->control_state_progress++;
+            // fallthrough
+        case 15:
+            func_global_asm_806C8D20(gCurrentActorPointer);
+            func_global_asm_8065EAF4();
+            handleInputsForControlState(0x30);
+            break;
+    }
+    func_global_asm_806CC970();
+    renderActor(gCurrentActorPointer, 0);
+}
+
+static void coop_warp_coop(void) {
+    gCurrentActorPointer->unkB8 = 0;
+    switch (gCurrentActorPointer->control_state_progress) {
+        case 0:
+            gCurrentActorPointer->noclip_byte = 1;
+            if (spawnActor(ACTOR_BANAPORTER, 0x98)) {
+                moveAndScaleActorToAnother(gLastSpawnedActor, gCurrentActorPointer, 0.15f);
+            }
+            gCurrentActorPointer->control_state_progress++;
+            break;
+        case 1:
+            gCurrentActorPointer->control_state_progress++;
+            extra_player_info_pointer->unk23C = 4;
+            break;
+        case 2:
+            gCurrentActorPointer->x_position = ((extra_player_info_pointer->unk210 - gCurrentActorPointer->x_position) * 0.5) + gCurrentActorPointer->x_position;
+            gCurrentActorPointer->y_position = ((extra_player_info_pointer->unk214 - gCurrentActorPointer->y_position) * 0.5) + gCurrentActorPointer->y_position;
+            gCurrentActorPointer->z_position = ((extra_player_info_pointer->unk218 - gCurrentActorPointer->z_position) * 0.5) + gCurrentActorPointer->z_position;
+            if (extra_player_info_pointer->unk23C != 0) {
+                extra_player_info_pointer->unk23C--;
+                if (extra_player_info_pointer->unk23C == 0) {
+                    gCurrentActorPointer->object_properties_bitfield &= 0xFFFF7FFF;
+                    gCurrentActorPointer->shadow_opacity = 0;
+                }
+            }
+            break;
+        case 3:
+            gCurrentActorPointer->object_properties_bitfield &= 0xFFFF7FFF;
+            gCurrentActorPointer->shadow_opacity = 0;
+            gCurrentActorPointer->control_state_progress++;
+            break;
+        case 5:
+            extra_player_info_pointer->unk23C = 0x14;
+            break;
+        case 6:
+            extra_player_info_pointer->unk23C -= 1;
+            if (extra_player_info_pointer->unk23C == 0) {
+                func_global_asm_8065EACC();
+                gCurrentActorPointer->control_state_progress++;
+            }
+            break;
+        case 7:
+            // (co-op) global_properties_bitfield &= 0xFFFCFFDF is not done: it is shared by both views
+            func_global_asm_80672C30(gCurrentActorPointer);
+            gCurrentActorPointer->x_position = extra_player_info_pointer->unk204;
+            gCurrentActorPointer->y_position = extra_player_info_pointer->unk208;
+            gCurrentActorPointer->unk8C = gCurrentActorPointer->y_position;
+            gCurrentActorPointer->z_position = extra_player_info_pointer->unk20C;
+            coop_warp_806C8220(0, gCurrentActorPointer->unk178, gCurrentActorPointer->unk58, gCurrentActorPointer);
+            func_global_asm_8061EB04(gCurrentActorPointer, extra_player_info_pointer->unk1A4);
+            extra_player_info_pointer->unk23C = 0x14;
+            func_global_asm_806291B4(2);
+            gCurrentActorPointer->control_state_progress++;
+            break;
+        case 8:
+            // (co-op) global_properties_bitfield |= 0x30020 is not done either
+            extra_player_info_pointer->unk23C -= 1;
+            if (extra_player_info_pointer->unk23C == 0) {
+                func_global_asm_80602498();
+                if (spawnActor(ACTOR_BANAPORTER, 0x98)) {
+                    moveAndScaleActorToAnother(gLastSpawnedActor, gCurrentActorPointer, 0.15f);
+                }
+                gCurrentActorPointer->control_state_progress++;
+                extra_player_info_pointer->unk23C = 0xC;
+            }
+            break;
+        case 10:
+            if (extra_player_info_pointer->unk23C != 0) {
+                extra_player_info_pointer->unk23C--;
+                if (extra_player_info_pointer->unk23C == 0) {
+                    gCurrentActorPointer->x_position = extra_player_info_pointer->unk210;
+                    gCurrentActorPointer->y_position = extra_player_info_pointer->unk214;
+                    gCurrentActorPointer->z_position = extra_player_info_pointer->unk218;
+                    gCurrentActorPointer->object_properties_bitfield |= 0x8000;
+                }
+            }
+            break;
+        case 11:
+            handleInputsForControlState(0x20);
+            playAnimation(gCurrentActorPointer, 0x1B);
+            setYAccelerationFrom80753578();
+            gCurrentActorPointer->control_state_progress++;
+            break;
+        case 12:
+        case 13:
+            handleInputsForControlState(0x20);
+            applyActorYAcceleration();
+            break;
+        case 14:
+            func_global_asm_80617770(gCurrentActorPointer, 0x2F, 0);
+            gCurrentActorPointer->control_state_progress++;
+            // fallthrough
+        case 15:
+            func_global_asm_806C8D20(gCurrentActorPointer);
+            func_global_asm_8065EAF4();
+            handleInputsForControlState(0x30);
+            break;
+    }
+    func_global_asm_806CC970();
+    renderActor(gCurrentActorPointer, 0);
+}
+
+RECOMP_PATCH void func_global_asm_806DB670(void) {
+#if COOP_WARP_USE_ORIG
+    coop_warp_orig();
+#else
+    if (coop_active_here() && character_change_array[1].does_player_exist) {
+        coop_warp_coop();
+    } else {
+        coop_warp_orig();
+    }
+#endif
+}
 // ---- Story co-op: warp-pad "banaporter" effect (func_global_asm_8069B3FC) ----
 // The original drives gPlayerPointer (P1) only: it feeds P1's position targets and advances P1's
 // control_state_progress. Here it follows the player that is actually teleporting (control_state 0x52).
@@ -4469,18 +6250,19 @@ RECOMP_PATCH void func_global_asm_806BE09C(void) {
     s32 i;
     s32 count = 0;
     Actor *pl = gPlayerPointer;
+    int f = 0; // player (0/1) who feeds
 
     if (coop_active_here()) {
         Actor *k0 = character_change_array[0].playerPointer;
         Actor *k1 = character_change_array[1].playerPointer;
         if (k0 != NULL && k0->control_state == 0x6C) pl = k0;
-        else if (k1 != NULL && k1->control_state == 0x6C) pl = k1;
+        else if (k1 != NULL && k1->control_state == 0x6C) { pl = k1; f = 1; }
     }
     sp4C = pl->additional_actor_data;
     levelIndex = getLevelIndex(current_map, 0);
     sp44 = D_global_asm_807FC930[levelIndex] / (f32)D_global_asm_807446C0[levelIndex];
     if (func_global_asm_806BDD90() == 1) {
-        D_global_asm_807FDC90->unk2C = func_global_asm_806F8AD4(0, 0);
+        D_global_asm_807FDC90->unk2C = func_global_asm_806F8AD4(0, f);
         if (D_global_asm_807FDC90->unk2C != 0) {
             gCurrentActorPointer->control_state = 0x12;
             gCurrentActorPointer->control_state_progress = 0;
@@ -4512,20 +6294,28 @@ RECOMP_PATCH void func_global_asm_806BE09C(void) {
                     }
                     if (D_global_asm_807FDC90->unk2C != 0) {
                         if (!(object_timer & 3)) {
-                            sp3C = COOP_FED_TNS(current_character_index[0]);
+                            sp3C = COOP_FED_TNS(current_character_index[f]);
                             D_global_asm_807FDC90->unk2C--;
-                            changeCollectableCount(0, 0, -1);
+                            changeCollectableCount(0, f, -1);
                             sp3C[levelIndex]++;
                             for (i = 0; i < 5; i++) { count += COOP_FED_TNS(i)[levelIndex]; }
                             if (count >= D_global_asm_807446C0[levelIndex]) {
                                 D_global_asm_807FDC90->unk2C = 0;
-                                coop_hud_hide_item(0, (pl == character_change_array[1].playerPointer) ? 1 : 0);
+                                coop_hud_hide_item(0, 0); // hippo full: nobody has anything left to give, hide both counters
+                                coop_hud_hide_item(0, 1);
                             }
                             func_global_asm_8071498C(func_global_asm_8071D0F0);
                             func_global_asm_807149FC(-1);
                             func_global_asm_807149B8(1);
                             func_global_asm_80714950((s32)gCurrentActorPointer);
-                            func_global_asm_80714C08(func_global_asm_806FACE8(0), 0.3f, pl, 4, 0);
+                            {
+                                u8 saved_k_ = current_character_index[0];
+                                void *spr_;
+                                if (f == 1) current_character_index[0] = current_character_index[1]; // the sprite follows player 0's Kong
+                                spr_ = func_global_asm_806FACE8(0);
+                                current_character_index[0] = saved_k_;
+                                func_global_asm_80714C08(spr_, 0.3f, pl, 4, 0);
+                            }
                         }
                     } else if (D_global_asm_807FDC90->unk2E == 0) {
                         D_global_asm_807FDC90->unk2C = 0x1E;
@@ -4562,4 +6352,122 @@ RECOMP_PATCH void func_global_asm_806BE09C(void) {
     }
     func_global_asm_8072881C(0, (s32 *)&D_global_asm_807FDC90->unk28);
     renderActor(gCurrentActorPointer, 0);
+}
+
+// ---- Story co-op: pause menu ----
+// Either player can open the pause menu. The menu is driven by the pad of the player who pressed START
+// (D_global_asm_807FC8B9) and is shown full screen on that player's view (see coop_fullscreen_now). While the game is
+// paused nobody else can act, so the other player cannot pause or move.
+extern u8 func_global_asm_8061CB50(void);
+extern u8 func_global_asm_8062919C(void);
+extern u8 func_global_asm_806291A8(void);
+extern u8 D_global_asm_807FC8B9;
+
+RECOMP_PATCH void func_global_asm_806E6234(void) {
+    u16 held = *(u16 *)((u8 *)&D_global_asm_807FD610[cc_player_index] + 0x2C);
+    if ((global_properties_bitfield & 1) && coop_active_here()) return; // somebody is already pausing: the other player's START does nothing
+    if ((held & 0x1000)
+        && !func_global_asm_8061CB50()
+        && (D_global_asm_807FD888 == 0.0f)
+        && (gameIsInAdventureMode() || gameIsInMysteryMenuMinigameMode() || gameIsInDKTVMode())
+        && !func_global_asm_8062919C()
+        && !func_global_asm_806291A8()) {
+        { extern void coop_hud_peek_cancel(void); coop_hud_peek_cancel(); }
+        D_global_asm_807FC8B9 = cc_player_index;
+        global_properties_bitfield |= 1;
+    }
+}
+
+// ---- Story co-op: update of the actors while the game is paused (func_global_asm_806789E4) ----
+// Only the pause menu actors run here (unk64 & 2). The main pause menu reads the inputs of player 0
+// (character_change_array[0].new_controller_inputs): when P2 pressed START it is given P2's inputs for its update.
+extern void *D_global_asm_807FBFE0[];
+extern void func_global_asm_80614A64(Actor *);
+extern void func_global_asm_806790F4(u8);
+extern void func_global_asm_80678B04(void);
+
+// While the pause menu of P2 is updated / drawn, the menu (which reads player 0's data) is shown P2's Kong and
+// consumables: current_character_index[0] and the per-player fields of PlayerProgress (ammo / oranges / crystals / film at
+// +0x2F0, health at +0x2FB, melons at +0x2FC) are exchanged with P1's, and put back right after.
+extern u8 D_global_asm_807FC950[];
+void coop_pause_persona(int on) {
+    static int active = 0;
+    u8 tmp;
+    int i;
+    if (on == active) return;
+    if (on && !(coop_active_here() && (D_global_asm_807FC8B9 & 1) && character_change_array[1].does_player_exist)) return;
+    tmp = current_character_index[0];
+    current_character_index[0] = current_character_index[1];
+    current_character_index[1] = tmp;
+    for (i = 0x2F0; i < 0x2FE; i++) {
+        tmp = D_global_asm_807FC950[i];
+        D_global_asm_807FC950[i] = D_global_asm_807FC950[0x306 + i];
+        D_global_asm_807FC950[0x306 + i] = tmp;
+    }
+    active = on;
+}
+
+RECOMP_PATCH void func_global_asm_806789E4(void) {
+    s32 i;
+
+    for (i = 0; i < 4; i++) {
+        D_global_asm_807FBFE0[i] = NULL;
+    }
+    for (D_global_asm_807FBB3C = 0; D_global_asm_807FBB3C < D_global_asm_807FBB34; D_global_asm_807FBB3C++) {
+        gCurrentActorPointer = D_global_asm_807FB930[D_global_asm_807FBB3C].unk0;
+        if (gCurrentActorPointer->unk64 & 2) {
+            int pm_swap_ = 0;
+            func_global_asm_80678BBC(gCurrentActorPointer);
+            if (coop_active_here() && (D_global_asm_807FC8B9 & 1) && character_change_array[1].does_player_exist
+                && (void *)D_global_asm_8074C0A0[gCurrentActorPointer->unk58] == (void *)func_global_asm_806A8158) {
+                __typeof__(character_change_array[0].new_controller_inputs) t_new_ = character_change_array[0].new_controller_inputs;
+                character_change_array[0].new_controller_inputs = character_change_array[1].new_controller_inputs;
+                character_change_array[1].new_controller_inputs = t_new_;
+                {   // the stick is read straight from the pad array (port 0)
+                    __typeof__(D_global_asm_807ECD10[0]) t_pad_ = D_global_asm_807ECD10[0];
+                    D_global_asm_807ECD10[0] = D_global_asm_807ECD10[1];
+                    D_global_asm_807ECD10[1] = t_pad_;
+                }
+                pm_swap_ = 1;
+            }
+            // pause menu of a bonus barrel played by P2 (single-player map): the menu reads controller 1 -> swap the two pads
+            int mg_pause_ = 0;
+            if (coop_mg_swapped && !coop_map_allowed() && (void *)D_global_asm_8074C0A0[gCurrentActorPointer->unk58] == (void *)func_global_asm_806A8158) {
+                OSContPad tp_ = D_global_asm_807ECD10[0];
+                u16 tn_ = newly_pressed_input[0];
+                D_global_asm_807ECD10[0] = D_global_asm_807ECD10[1];
+                D_global_asm_807ECD10[1] = tp_;
+                newly_pressed_input[0] = newly_pressed_input[1];
+                newly_pressed_input[1] = tn_;
+                mg_pause_ = 1;
+            }
+            if (pm_swap_) coop_pause_persona(1);
+            D_global_asm_8074C0A0[gCurrentActorPointer->unk58]();
+            if (pm_swap_) coop_pause_persona(0);
+            if (mg_pause_) {
+                OSContPad tp_ = D_global_asm_807ECD10[0];
+                u16 tn_ = newly_pressed_input[0];
+                D_global_asm_807ECD10[0] = D_global_asm_807ECD10[1];
+                D_global_asm_807ECD10[1] = tp_;
+                newly_pressed_input[0] = newly_pressed_input[1];
+                newly_pressed_input[1] = tn_;
+            }
+            if (pm_swap_) {
+                __typeof__(character_change_array[0].new_controller_inputs) t_new_ = character_change_array[0].new_controller_inputs;
+                character_change_array[0].new_controller_inputs = character_change_array[1].new_controller_inputs;
+                character_change_array[1].new_controller_inputs = t_new_;
+                {
+                    __typeof__(D_global_asm_807ECD10[0]) t_pad_ = D_global_asm_807ECD10[0];
+                    D_global_asm_807ECD10[0] = D_global_asm_807ECD10[1];
+                    D_global_asm_807ECD10[1] = t_pad_;
+                }
+            }
+            func_global_asm_80678CC8(gCurrentActorPointer);
+        }
+        if (gCurrentActorPointer->animation_state != NULL) {
+            func_global_asm_80614A64(gCurrentActorPointer);
+        }
+    }
+    func_global_asm_806790F4(1);
+    func_global_asm_80678B04();
 }

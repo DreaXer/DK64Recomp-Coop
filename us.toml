@@ -47,6 +47,86 @@ func = "playSoundAtPosition"
 text = "if (ctx->r9 < 2) { ctx->r9 = 2; }"
 before_vram = 0x806086E8
 
+# co-op: dynamic music zones (K. Rool's ship on DK Isles, caves of Japes / Aztec...). func_global_asm_80603450 picks the music from the
+# camera of player 0 only. The music follows the Kong who last entered / left a music zone: while it runs, the camera data of the two
+# Kongs (eye, at, heading) are exchanged when that Kong is P2, and exchanged back before it returns. The state is kept in function statics
+# (declared by the entry hook, which is emitted at the top of the function, so the exit hook sees them).
+# Music zone tables (MusicCylData, 0xE bytes: x, y, z, unk6 (-1: cylinder), range) per map: 7 Japes, 38 Aztec, 34 DK Isles, 176 Training Grounds.
+# The state kept per Kong is the INDEX of the zone he is in (0: none), not just "in a zone": a warp from one zone to another (DK Isles pads) is
+# then a change too (otherwise the music kept following the other Kong).
+[[patches.hook]]
+func = "func_global_asm_80603450"
+text = """static int cm_last_; static int cm_in_[2]; static uint32_t cm_map_; static int cm_sw_;
+    {
+        int32_t cc_ = MEM_W((int32_t)0x807FC924, 0);
+        uint32_t map_ = MEM_W((int32_t)0x8076A0A8, 0);
+        int32_t tab_ = 0;
+        int n_ = 0;
+        cm_sw_ = 0;
+        if (map_ != cm_map_) { cm_map_ = map_; cm_last_ = 0; cm_in_[0] = 0; cm_in_[1] = 0; }
+        if (map_ == 7) { tab_ = 0x80745F74; n_ = 7; }
+        else if (map_ == 38) { tab_ = 0x80745FD8; n_ = 4; }
+        else if (map_ == 34) { tab_ = 0x80746244; n_ = 4; }
+        else if (map_ == 176) { tab_ = 0x8074627C; n_ = 3; }
+        if (n_ > 0 && MEM_BU(cc_ + 0x2F0, 0) != 0 && MEM_W(cc_ + 0x2F0 + 4, 0) != 0 && MEM_W(cc_ + 4, 0) != 0) {
+            int in_[2] = {0, 0};
+            int p_, i_, k_;
+            for (p_ = 0; p_ < 2; p_++) {
+                union { uint32_t u; float f; } ex_, ey_, ez_;
+                int32_t c_ = cc_ + p_ * 0x2F0;
+                ex_.u = MEM_W(c_ + 0x210, 0); ey_.u = MEM_W(c_ + 0x214, 0); ez_.u = MEM_W(c_ + 0x218, 0);
+                for (i_ = 0; i_ < n_; i_++) {
+                    int32_t z_ = tab_ + i_ * 14;
+                    float dx_ = ex_.f - (float)MEM_H(z_, 0);
+                    float dz_ = ez_.f - (float)MEM_H(z_ + 4, 0);
+                    float rg_ = (float)MEM_H(z_ + 8, 0);
+                    float d2_ = dx_ * dx_ + dz_ * dz_;
+                    if (MEM_H(z_ + 6, 0) != -1) { float dy_ = ey_.f - (float)MEM_H(z_ + 2, 0); d2_ += dy_ * dy_; } else { rg_ -= 20.0f; }
+                    if (d2_ < rg_ * rg_) { in_[p_] = i_ + 1; }
+                }
+            }
+            if (in_[0] != cm_in_[0]) { cm_last_ = 0; }
+            if (in_[1] != cm_in_[1]) { cm_last_ = 1; }
+            cm_in_[0] = in_[0]; cm_in_[1] = in_[1];
+            if (cm_last_ == 1) {
+                const int32_t o_[7] = {0x210, 0x214, 0x218, 0x228, 0x22C, 0x230, 0x2C4};
+                for (k_ = 0; k_ < 7; k_++) {
+                    uint32_t t_ = MEM_W(cc_ + o_[k_], 0);
+                    MEM_W(cc_ + o_[k_], 0) = MEM_W(cc_ + 0x2F0 + o_[k_], 0);
+                    MEM_W(cc_ + 0x2F0 + o_[k_], 0) = t_;
+                }
+                cm_sw_ = 1;
+            }
+        }
+    }"""
+before_vram = 0x80603450
+
+[[patches.hook]]
+func = "func_global_asm_80603450"
+text = """if (cm_sw_) {
+        int32_t cc_ = MEM_W((int32_t)0x807FC924, 0);
+        const int32_t o_[7] = {0x210, 0x214, 0x218, 0x228, 0x22C, 0x230, 0x2C4};
+        int k_;
+        for (k_ = 0; k_ < 7; k_++) {
+            uint32_t t_ = MEM_W(cc_ + o_[k_], 0);
+            MEM_W(cc_ + o_[k_], 0) = MEM_W(cc_ + 0x2F0 + o_[k_], 0);
+            MEM_W(cc_ + 0x2F0 + o_[k_], 0) = t_;
+        }
+        cm_sw_ = 0;
+    }"""
+before_vram = 0x806049C4
+
+# co-op: cutscene command 0x1C turns the scene actor with the angle of player 0's camera (character_change_array[0].unk2C8). When the actor of the
+# scene (subject, D_global_asm_807F5CE8) is P2 (golden banana dance picked by P2), P2's own camera angle is used instead (entry stride 0x2F0, playerPointer at 0x04).
+[[patches.hook]]
+func = "func_global_asm_80627F04"
+text = """{
+        int32_t cc_ = (int32_t)ctx->r14;
+        uint32_t subj_ = MEM_W((int32_t)0x807F5CE8, 0);
+        if (subj_ != 0 && subj_ == (uint32_t)MEM_W(cc_ + 0x2F0 + 4, 0) && MEM_BU(cc_ + 0x2F0, 0) != 0) { ctx->r14 = (int64_t)(int32_t)(cc_ + 0x2F0); }
+    }"""
+before_vram = 0x80628EB4
+
 #allocate 4 extra bytes per actor
 #[[patches.hook]]
 #func = "func_global_asm_80678050"

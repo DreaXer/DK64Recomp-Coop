@@ -165,7 +165,12 @@ RECOMP_PATCH Gfx *func_global_asm_80629300(Gfx *dl) {
             recomp_get_ui_bounds(&width, &height);
             gEXPushScissor(dl++);
             gEXPushViewport(dl++);
-            gEXSetScissor(dl++, G_SC_NON_INTERLACE, G_EX_ORIGIN_LEFT, G_EX_ORIGIN_RIGHT, 0, 0, 0, D_global_asm_80744494);
+            {
+                extern int coop_fx_range(int *, int *);
+                int top = 0, bottom = D_global_asm_80744494;
+                coop_fx_range(&top, &bottom); // co-op: only the half of the Kong who warps
+                gEXSetScissor(dl++, G_SC_NON_INTERLACE, G_EX_ORIGIN_LEFT, G_EX_ORIGIN_RIGHT, 0, top, 0, bottom);
+            }
             gEXSetViewportAlign(dl++, G_EX_ORIGIN_LEFT, 0, 0);
             switch (D_global_asm_807F5D85) {
                 case 7: // Pausing (Blurred Background)
@@ -1004,6 +1009,11 @@ extern s16 D_global_asm_807FD800;
 extern f32 loading_zone_transition_speed;
 extern u8 loading_zone_transition_type;
 
+extern int coop_wx_two(void);
+// co-op, K. Rool's ship rain: intensity (0..1) of each Kong, from his distance to the ship
+static f32 coop_ship_f_[2];
+f32 coop_ship_f(int p) { return (p >= 0 && p < 2) ? coop_ship_f_[p] : 0.0f; }
+
 // @recomp: Skybox manager
 RECOMP_PATCH Gfx* func_global_asm_80707980(Gfx* dl, f32 arg1, f32 arg2, Mtx *arg3, s16 arg4) {
     f32 temp_f0;
@@ -1122,13 +1132,36 @@ RECOMP_PATCH Gfx* func_global_asm_80707980(Gfx* dl, f32 arg1, f32 arg2, Mtx *arg
                 var_f14 = character_change_array[cc_player_index].look_at_eye[0];
                 var_f16 = character_change_array[cc_player_index].look_at_eye[2];
             } else {
-                var_f14 = gPlayerPointer->position.f[0];
-                var_f16 = gPlayerPointer->position.f[2];
+                // @recomp co-op: each viewport measures the distance to the ship from ITS Kong (not always P1)
+                Actor *vp_ = gPlayerPointer;
+                if (coop_wx_two() && cc_player_index < 2 && character_change_array[cc_player_index].playerPointer != NULL) {
+                    vp_ = character_change_array[cc_player_index].playerPointer;
+                }
+                var_f14 = vp_->position.f[0];
+                var_f16 = vp_->position.f[2];
             }
             temp_f0 = var_f14 - 3000.0f;
             temp_f2 = var_f16 - 5000.0f;
             temp_f0 = _sqrtf(SQ(temp_f0) + SQ(temp_f2));
-            if (temp_f0 < 2500.0f) {
+            if (coop_wx_two() && cc_player_index < 2) {
+                // The rain is for the Kong(s) near the ship: the intensity of each one is kept (coop_ship_f) and the rain particles
+                // are spawned per Kong (func_global_asm_80711410). The controller runs for the strongest one. The darkening of the
+                // ambient light is global (one value for both views), so it is not applied here.
+                f32 m_;
+                if (temp_f0 < 2500.0f) {
+                    temp_f12 = (f64) ((2500.0f - temp_f0) / 1000.0f);
+                    coop_ship_f_[cc_player_index] = MIN(1.0, temp_f12);
+                } else {
+                    coop_ship_f_[cc_player_index] = 0.0f;
+                }
+                m_ = coop_ship_f_[0] > coop_ship_f_[1] ? coop_ship_f_[0] : coop_ship_f_[1];
+                if (m_ > 0.0f) {
+                    func_global_asm_8068B830((s16) (s32) (2.0f + m_), (s16) (s32) (m_ * 400.0f), (s16) (s32) (m_ * 30.0f));
+                } else {
+                    func_global_asm_8068B8FC();
+                }
+                func_global_asm_8068B8A4(1.0f);
+            } else if (temp_f0 < 2500.0f) {
                 temp_f12 = (f64) ((2500.0f - temp_f0) / 1000.0f);
                 var_f2 = MIN(1.0, temp_f12);
                 func_global_asm_8068B830((s16) (s32) (2.0f + var_f2), (s16) (s32) (var_f2 * 400.0f), (s16) (s32) (var_f2 * 30.0f));

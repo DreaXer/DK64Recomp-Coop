@@ -549,8 +549,13 @@ u16 *func_global_asm_806FFF5C(void);
 void func_global_asm_8062A348(void);
 void func_global_asm_8070A848(void *arg0, void *arg1);
 
+// TEST (flicker of the other Kong's textures when a Kong warps): 0 = no swipe / screen capture for the warp pad in co-op, 1 = swipe as before
+#define COOP_WARP_SWIPE 1
+extern int coop_wx_two(void);
+
 // @recomp: Screenshot for transition rendering
 RECOMP_PATCH void func_global_asm_806291B4(u8 arg0) {
+    if (!COOP_WARP_SWIPE && (arg0 == 2 || arg0 == 6) && coop_wx_two()) return;
     if ((D_global_asm_807F5D84 == 0) || (arg0 == 7)) {
         if (D_global_asm_807F5D84 == 0) {
             // D_global_asm_807F5D80 = malloc(D_global_asm_80744490 * D_global_asm_80744494 * 2);
@@ -558,6 +563,7 @@ RECOMP_PATCH void func_global_asm_806291B4(u8 arg0) {
         func_global_asm_8070A848(D_global_asm_807F5D80, D_global_asm_80744470[D_global_asm_807444FC]); // @recomp: Call this to initiate the rt64 snapshot
         D_global_asm_807F5D84 = 1;
         D_global_asm_80747B20 = 5;
+        { extern void coop_fx_begin(int); coop_fx_begin(arg0); }
         switch (arg0) {
             case 1:
                 D_global_asm_807F5D86 = 0xFF;

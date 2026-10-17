@@ -14,6 +14,10 @@ void func_global_asm_805FF378(Maps nextMap, s32 nextExit);
 void func_global_asm_805FF4D8(Maps map, s32 exit);
 void func_global_asm_805FF628(Maps map, s32 exit);
 void func_global_asm_806F3BEC(Actor *arg0, s16 arg1, s16 arg2, u8 arg3);
+extern Actor *coop_zone_player(void);
+extern u32 object_timer;
+extern int coop_wx_two(void);
+extern void coop_wx_set_owner(int p);
 void func_global_asm_806C92C4(s32 arg0);
 void func_global_asm_805FF660(u8 arg0);
 void func_global_asm_805FF898(void);
@@ -149,7 +153,7 @@ RECOMP_PATCH void func_global_asm_8068AD7C(void) {
                 } else {
                     func_global_asm_805FF378(temp_s0->unk0, temp_s0->unk2);
                 }
-                func_global_asm_806F3BEC(gPlayerPointer, D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
+                func_global_asm_806F3BEC(coop_zone_player(), D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
                 break;
             }
             break;
@@ -171,14 +175,14 @@ RECOMP_PATCH void func_global_asm_8068AD7C(void) {
                         break;
                 }
                 func_global_asm_805FF9AC(temp_s0->unk0, temp_s0->unk2, 0, 0);
-                func_global_asm_806F3BEC(gPlayerPointer, D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
+                func_global_asm_806F3BEC(coop_zone_player(), D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
                 break;
             }
             break;
         case 0x5:
             if (!(global_properties_bitfield & 0x400)) {
                 func_global_asm_805FF628(temp_s0->unk0, temp_s0->unk2);
-                func_global_asm_806F3BEC(gPlayerPointer, D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
+                func_global_asm_806F3BEC(coop_zone_player(), D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
                 break;
             }
             break;
@@ -189,14 +193,14 @@ RECOMP_PATCH void func_global_asm_8068AD7C(void) {
         case 0x7:
             if (!(global_properties_bitfield & 0x400)) {
                 func_global_asm_805FF9AC(temp_s0->unk0, temp_s0->unk2, temp_s0->unk4, 2);
-                func_global_asm_806F3BEC(gPlayerPointer, D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
+                func_global_asm_806F3BEC(coop_zone_player(), D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
                 break;
             }
             break;
         case 0x8:
             if (!(global_properties_bitfield & 0x400)) {
                 func_global_asm_805FF898();
-                func_global_asm_806F3BEC(gPlayerPointer, D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
+                func_global_asm_806F3BEC(coop_zone_player(), D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
                 break;
             }
             break;
@@ -211,7 +215,7 @@ RECOMP_PATCH void func_global_asm_8068AD7C(void) {
             break;
         case 0xB:
             func_global_asm_805FF378(D_global_asm_80744700[getLevelIndex(current_map, 0U)], current_exit);
-            func_global_asm_806F3BEC(gPlayerPointer, D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
+            func_global_asm_806F3BEC(coop_zone_player(), D_global_asm_807FDCB8, D_global_asm_807FDCBC, 0x46U);
             break;
         case 0xC:
             var_v0 = temp_s0->unk2 ? 0 : 0x8000;
@@ -386,30 +390,52 @@ RECOMP_PATCH void func_global_asm_806443E4(Prop_ScriptData *arg0, s16 arg1, s16 
         return;
     }
     var_v1 = arg0->unk0;
-    dz = character_change_array->look_at_eye_z - D_global_asm_807F6224;
-    dx = character_change_array->look_at_eye_x - D_global_asm_807F621C;
-    dy = character_change_array->look_at_eye_y - D_global_asm_807F6220;
-    var_f16 = _sqrtf(SQ(dz) + (SQ(dx) + SQ(dy)));
-    
-    if ((character_change_array->chunk == 0xE) && (is_cutscene_active != 1)) {
-        var_f14 = 1.0f;
-    } else if (character_change_array->chunk == 7) {
-        var_f14 = 0.0f;
-    } else {
-        var_f16 -= _sqrtf(SQ(D_global_asm_807F621C - 1714.0f) + SQ(D_global_asm_807F6220 - 226.0f) + SQ(D_global_asm_807F6224 - 3410.0f));
-        if (var_f16 < 0.0) {
-            var_f16 = 0.0f;
+    {
+        // @recomp co-op: the storm is evaluated for each Kong (his camera, his chunk); his rain is drawn in his half only.
+        // The thunder below follows the Kong who is the closest to the storm.
+        int np = coop_wx_two() ? 2 : 1;
+        int p;
+        int any_rain = 0;
+        f32 best_f14 = -1.0f;
+        f32 best_f16 = 0.0f;
+        for (p = 0; p < np; p++) {
+            CharacterChange *cp = &character_change_array[p];
+            dz = cp->look_at_eye_z - D_global_asm_807F6224;
+            dx = cp->look_at_eye_x - D_global_asm_807F621C;
+            dy = cp->look_at_eye_y - D_global_asm_807F6220;
+            var_f16 = _sqrtf(SQ(dz) + (SQ(dx) + SQ(dy)));
+
+            if ((cp->chunk == 0xE) && (is_cutscene_active != 1)) {
+                var_f14 = 1.0f;
+            } else if (cp->chunk == 7) {
+                var_f14 = 0.0f;
+            } else {
+                var_f16 -= _sqrtf(SQ(D_global_asm_807F621C - 1714.0f) + SQ(D_global_asm_807F6220 - 226.0f) + SQ(D_global_asm_807F6224 - 3410.0f));
+                if (var_f16 < 0.0) {
+                    var_f16 = 0.0f;
+                }
+                if (var_f16 > 600.0f) {
+                    var_f14 = 0.0f;
+                } else {
+                    var_f14 = 1.0 - (var_f16 / 600.0f);
+                }
+            }
+            if ((cp->chunk == 0xE) || ((cp->chunk == 0xB) && (var_f16 < D_global_asm_807480DC))) {
+                coop_wx_set_owner(np > 1 ? p : -1);
+                func_global_asm_80711410(2.9f, -0x1E, var_f14, 0xE, MAX(0.05, var_f14));
+                any_rain = 1;
+            }
+            if (var_f14 > best_f14) {
+                best_f14 = var_f14;
+                best_f16 = var_f16;
+            }
         }
-        if (var_f16 > 600.0f) {
-            var_f14 = 0.0f;
-        } else {
-            var_f14 = 1.0 - (var_f16 / 600.0f);
+        coop_wx_set_owner(-1);
+        if (!any_rain) {
+            D_global_asm_8077058C = 0;
         }
-    }
-    if ((character_change_array->chunk == 0xE) || ((character_change_array->chunk == 0xB) && (var_f16 < D_global_asm_807480DC))) {
-        func_global_asm_80711410(2.9f, -0x1E, var_f14, 0xE, MAX(0.05, var_f14));
-    } else {
-        D_global_asm_8077058C = 0;
+        var_f14 = best_f14;
+        var_f16 = best_f16;
     }
     if (RandClamp(50) == 0xF) {
         var_v1->unk0 = 0x28;
